@@ -18,6 +18,11 @@
   "contributes": {
     "commands": [
       {
+        "command": "linear.authenticate",
+        "title": "Linear: Authenticate",
+        "icon": "$(key)"
+      },
+      {
         "command": "linear.refreshIssues",
         "title": "Refresh Issues",
         "icon": "$(refresh)"
@@ -276,12 +281,12 @@
       "view/item/context": [
         {
           "command": "linear.editIssue",
-          "when": "view == linearIssues",
+          "when": "view == linearIssues && viewItem == issue",
           "group": "inline"
         },
         {
           "command": "linear.changeIssueStatus",
-          "when": "view == linearIssues",
+          "when": "view == linearIssues && viewItem == issue",
           "group": "inline"
         }
       ]
@@ -291,8 +296,7 @@
       "properties": {
         "linear.apiToken": {
           "type": "string",
-          "description": "Linear API Token",
-          "scope": "window"
+          "description": "Linear API Token (非推奨: OAuth2.0認証を使用してください)"
         },
         "linear.filters": {
           "type": "object",

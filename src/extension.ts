@@ -18,7 +18,13 @@ export async function activate(context: vscode.ExtensionContext) {
     return;
   }
 
-  const linearService = new LinearService(apiToken);
+  // 現在の環境のURIスキームを取得
+  const redirectUri = `${vscode.env.uriScheme}://matsurih.vscode-linear-extension/oauth-callback`;
+
+  const linearService = new LinearService(context, {
+    clientId: "978f921d7fbf2c5cd3d96ddb495ffde4",
+    redirectUri: redirectUri,
+  });
   const issueTreeProvider = new IssueTreeProvider(linearService);
   const issueDetailProvider = new IssueDetailViewProvider(
     context.extensionUri,
@@ -36,6 +42,37 @@ export async function activate(context: vscode.ExtensionContext) {
     treeDataProvider: issueTreeProvider,
     showCollapseAll: true,
   });
+
+  // OAuth2.0コールバックの処理
+  context.subscriptions.push(
+    vscode.window.registerUriHandler({
+      handleUri: async (uri: vscode.Uri) => {
+        try {
+          const params = new URLSearchParams(uri.query);
+          const code = params.get("code");
+          const state = params.get("state");
+
+          if (code && state) {
+            await linearService.handleOAuthCallback(code, state);
+            await issueTreeProvider.refresh();
+          }
+        } catch (error) {
+          vscode.window.showErrorMessage(`認証に失敗しました: ${error}`);
+        }
+      },
+    })
+  );
+
+  // 認証状態の確認と初期化
+  context.subscriptions.push(
+    vscode.commands.registerCommand("linear.authenticate", async () => {
+      try {
+        await linearService.initializeOAuth();
+      } catch (error) {
+        vscode.window.showErrorMessage(`認証の初期化に失敗しました: ${error}`);
+      }
+    })
+  );
 
   // WebViewの登録
   context.subscriptions.push(
@@ -434,6 +471,17 @@ export async function activate(context: vscode.ExtensionContext) {
         vscode.window.showErrorMessage(`Failed to search issues: ${error}`);
       }
     }),
+    vscode.commands.registerCommand(
+      "linear.applyQuickFilter",
+      async (filter: { key: string; label: string }) => {
+        if (filter && filter.key) {
+          await issueTreeProvider.applyQuickFilter(filter.key);
+          vscode.window.showInformationMessage(
+            `Applied filter: ${filter.label}`
+          );
+        }
+      }
+    ),
     treeView
   );
 

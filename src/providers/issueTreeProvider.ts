@@ -45,13 +45,18 @@ export interface FilterCriteria {
 
 // カスタムツリーアイテムの型定義
 interface CustomTreeItem {
-  type: "loading" | "noResults" | "pageInfo";
+  type: "loading" | "noResults" | "pageInfo" | "quickFilterItem";
   label: string;
   description?: string;
   tooltip?: string;
   iconName: string;
   accessibilityLabel: string;
   accessibilityRole: string;
+  command?: {
+    command: string;
+    title: string;
+    arguments: any[];
+  };
 }
 
 export class IssueTreeProvider
@@ -309,6 +314,28 @@ export class IssueTreeProvider
       return element.issues;
     }
 
+    // Quick Filterの子要素を返す
+    if (
+      this.isFilterIndicator(element) &&
+      element.type === "quickFilter" &&
+      element.filters
+    ) {
+      return element.filters.map((filter) => ({
+        type: "quickFilterItem" as const,
+        label: filter.label,
+        iconName: filter.icon,
+        command: {
+          command: "linear.applyQuickFilter",
+          title: "Apply Quick Filter",
+          arguments: [{ key: filter.key, label: filter.label }],
+        },
+        accessibilityLabel: `Apply ${filter.label} filter`,
+        accessibilityRole: "button",
+        description: "",
+        tooltip: `Click to filter by ${filter.label}`,
+      }));
+    }
+
     return [];
   }
 
@@ -353,6 +380,9 @@ export class IssueTreeProvider
       }
       if (item.tooltip) {
         treeItem.tooltip = item.tooltip;
+      }
+      if (item.command) {
+        treeItem.command = item.command;
       }
       treeItem.accessibilityInformation = {
         label: item.accessibilityLabel,
@@ -401,58 +431,25 @@ export class IssueTreeProvider
     // メタ情報の表示を改善
     const metaInfo = [];
     if (state?.name) {
-      const stateIcon = "$(circle-filled)";
-      metaInfo.push(`${stateIcon} ${state.name}`);
+      metaInfo.push(state.name);
     }
     if (assignee?.name) {
-      const assigneeIcon = "$(person)";
-      metaInfo.push(`${assigneeIcon} ${assignee.name}`);
+      metaInfo.push(assignee.name);
     }
     if (team?.name) {
-      const teamIcon = "$(organization)";
-      metaInfo.push(`${teamIcon} ${team.name}`);
+      metaInfo.push(team.name);
     }
     if (project?.name) {
-      const projectIcon = "$(folder)";
-      metaInfo.push(`${projectIcon} ${project.name}`);
+      metaInfo.push(project.name);
     }
     treeItem.description = metaInfo.join(" │ ");
 
-    // アクセシビリティ対応のツールチップ
-    const priorityLabel = this.ARIA_LABELS.priority[issue.priority];
-    const createdAt = new Date(issue.createdAt).toLocaleDateString();
-    const updatedAt = new Date(issue.updatedAt).toLocaleDateString();
-
-    const tooltip = new vscode.MarkdownString();
-    tooltip.appendMarkdown(`## ${issue.identifier} ${issue.title}\n\n`);
-    tooltip.appendMarkdown(
-      `**Priority:** $(${this.getPriorityIcon(
-        issue.priority
-      )}) ${priorityLabel}\n\n`
-    );
-    tooltip.appendMarkdown(
-      `**Status:** $(circle-filled) ${state?.name || "No Status"}\n\n`
-    );
-    tooltip.appendMarkdown(
-      `**Assignee:** $(person) ${assignee?.name || "Unassigned"}\n\n`
-    );
-    tooltip.appendMarkdown(
-      `**Team:** $(organization) ${team?.name || "No Team"}\n\n`
-    );
-    if (project) {
-      tooltip.appendMarkdown(`**Project:** $(folder) ${project.name}\n\n`);
-    }
-    tooltip.appendMarkdown(`**Created:** $(calendar) ${createdAt}\n\n`);
-    tooltip.appendMarkdown(`**Updated:** $(history) ${updatedAt}\n\n`);
-    if (issue.description) {
-      tooltip.appendMarkdown(`---\n\n${issue.description}`);
-    }
-    tooltip.isTrusted = true;
-    treeItem.tooltip = tooltip;
-
-    // アイコンの表示を改善（アクセシビリティ対応）
+    // アイコンの表示を改善
     const icon = this.getItemIcon(state?.color, issue.priority);
     treeItem.iconPath = icon;
+
+    // コンテキストメニュー用のcontextValue
+    treeItem.contextValue = "issue";
 
     // キーボードナビゲーション用のコマンド
     treeItem.command = {
@@ -463,9 +460,7 @@ export class IssueTreeProvider
 
     // アクセシビリティ用の追加情報
     treeItem.accessibilityInformation = {
-      label: `Issue ${issue.identifier}: ${
-        issue.title
-      }, ${priorityLabel}, Status: ${state?.name || "No Status"}`,
+      label: `Issue ${issue.identifier}: ${issue.title}`,
       role: "treeitem",
     };
 
@@ -534,7 +529,8 @@ export class IssueTreeProvider
       "type" in item &&
       (item.type === "loading" ||
         item.type === "noResults" ||
-        item.type === "pageInfo") &&
+        item.type === "pageInfo" ||
+        item.type === "quickFilterItem") &&
       "label" in item &&
       "iconName" in item &&
       "accessibilityLabel" in item &&
@@ -584,9 +580,7 @@ export class IssueTreeProvider
         groups.get(state.id)!.issues.push(issue);
       }
 
-      // ステータスの順序に基づいてソート
-      const groupArray = Array.from(groups.values());
-      return groupArray.sort((a, b) => {
+      return Array.from(groups.values()).sort((a, b) => {
         const aStateInfo = Array.from(stateOrder.values()).find(
           (info) => info.name === a.label
         );
@@ -770,13 +764,11 @@ export class IssueTreeProvider
           arguments: [indicator.filterKey],
         };
       }
-      // フィルターの詳細情報をツールチップに追加
       treeItem.tooltip.appendMarkdown(`**Active Filter**\n\n`);
       treeItem.tooltip.appendMarkdown(`Type: ${indicator.label}\n\n`);
       treeItem.tooltip.appendMarkdown(`Click ✕ to remove this filter`);
     } else {
       treeItem.description = "Click to expand";
-      // クイックフィルターの説明をツールチップに追加
       treeItem.tooltip.appendMarkdown(`**Quick Filters**\n\n`);
       treeItem.tooltip.appendMarkdown(`Click to show available quick filters`);
     }
