@@ -22,6 +22,28 @@ export class LinearService {
     }
   }
 
+  public async getIssueDetails(issueId: string) {
+    try {
+      const issue = await this.client.issue(issueId);
+      return issue;
+    } catch (error) {
+      throw new Error(`Failed to fetch issue details: ${error}`);
+    }
+  }
+
+  public async getIssueComments(issueId: string) {
+    try {
+      const comments = await this.client.comments({
+        filter: {
+          issue: { id: { eq: issueId } },
+        },
+      });
+      return comments.nodes;
+    } catch (error) {
+      throw new Error(`Failed to fetch comments: ${error}`);
+    }
+  }
+
   public async addComment(issueId: string, content: string) {
     try {
       await this.client.createComment({

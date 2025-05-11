@@ -10,7 +10,8 @@
     "Other"
   ],
   "activationEvents": [
-    "onView:linearIssues"
+    "onView:linearIssues",
+    "onView:linearIssueDetail"
   ],
   "main": "./out/src/extension.js",
   "contributes": {
@@ -24,6 +25,11 @@
         "command": "linear.filterMyIssues",
         "title": "Show My Issues",
         "icon": "$(filter)"
+      },
+      {
+        "command": "linear.showIssueDetail",
+        "title": "Show Issue Detail",
+        "icon": "$(info)"
       }
     ],
     "views": {
@@ -31,6 +37,11 @@
         {
           "id": "linearIssues",
           "name": "Linear Issues"
+        },
+        {
+          "id": "linearIssueDetail",
+          "name": "Issue Detail",
+          "type": "webview"
         }
       ]
     },

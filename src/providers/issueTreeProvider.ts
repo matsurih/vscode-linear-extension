@@ -32,11 +32,6 @@ export class IssueTreeProvider implements vscode.TreeDataProvider<Issue> {
       tooltip: `Assignee: ${assignee?.name || "Unassigned"}\nStatus: ${
         state?.name
       }\nPriority: ${issue.priority}`,
-      command: {
-        command: "linear.openIssue",
-        title: "Open Issue",
-        arguments: [issue],
-      },
       contextValue: "issue",
     };
   }

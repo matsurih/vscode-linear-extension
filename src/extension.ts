@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { LinearService } from "./services/linearService";
 import { IssueTreeProvider } from "./providers/issueTreeProvider";
+import { IssueDetailViewProvider } from "./providers/issueDetailViewProvider";
 
 export async function activate(context: vscode.ExtensionContext) {
   const apiToken = vscode.workspace
@@ -16,12 +17,24 @@ export async function activate(context: vscode.ExtensionContext) {
 
   const linearService = new LinearService(apiToken);
   const issueTreeProvider = new IssueTreeProvider(linearService);
+  const issueDetailProvider = new IssueDetailViewProvider(
+    context.extensionUri,
+    linearService
+  );
 
   // TreeViewの登録
   const treeView = vscode.window.createTreeView("linearIssues", {
     treeDataProvider: issueTreeProvider,
     showCollapseAll: true,
   });
+
+  // Issue詳細WebViewの登録
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(
+      IssueDetailViewProvider.viewType,
+      issueDetailProvider
+    )
+  );
 
   // コマンドの登録
   context.subscriptions.push(
@@ -31,14 +44,19 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("linear.filterMyIssues", () => {
       issueTreeProvider.toggleFilter();
     }),
-    vscode.commands.registerCommand("linear.openIssue", async (issue) => {
-      const url = issue.url;
-      if (url) {
-        await vscode.env.openExternal(vscode.Uri.parse(url));
-      }
+    vscode.commands.registerCommand("linear.showIssueDetail", async (issue) => {
+      await issueDetailProvider.updateIssueDetail(issue.id);
     }),
     treeView
   );
+
+  // TreeViewの選択イベントを監視
+  treeView.onDidChangeSelection(async (e) => {
+    if (e.selection.length > 0) {
+      const selectedIssue = e.selection[0];
+      await issueDetailProvider.updateIssueDetail(selectedIssue.id);
+    }
+  });
 }
 
 export function deactivate() {}
