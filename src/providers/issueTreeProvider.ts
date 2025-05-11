@@ -22,12 +22,15 @@ export class IssueTreeProvider implements vscode.TreeDataProvider<Issue> {
     this.refresh();
   }
 
-  getTreeItem(issue: Issue): vscode.TreeItem {
+  async getTreeItem(issue: Issue): Promise<vscode.TreeItem> {
+    const state = await issue.state;
+    const assignee = await issue.assignee;
+
     return {
       label: `${issue.identifier}: ${issue.title}`,
-      description: issue.state?.name,
-      tooltip: `Assignee: ${issue.assignee?.name || "Unassigned"}\nStatus: ${
-        issue.state?.name
+      description: state?.name,
+      tooltip: `Assignee: ${assignee?.name || "Unassigned"}\nStatus: ${
+        state?.name
       }\nPriority: ${issue.priority}`,
       command: {
         command: "linear.openIssue",
