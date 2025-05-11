@@ -25,7 +25,7 @@
       {
         "command": "linear.filterMyIssues",
         "title": "Show My Issues",
-        "icon": "$(filter)"
+        "icon": "$(person)"
       },
       {
         "command": "linear.showIssueDetail",
@@ -41,6 +41,106 @@
         "command": "linear.editIssue",
         "title": "Edit Issue",
         "icon": "$(edit)"
+      },
+      {
+        "command": "linear.changeIssueStatus",
+        "title": "Change Issue Status",
+        "icon": "$(symbol-enum)"
+      },
+      {
+        "command": "linear.groupByStatus",
+        "title": "Group by Status",
+        "icon": "$(symbol-enum)"
+      },
+      {
+        "command": "linear.groupByProject",
+        "title": "Group by Project",
+        "icon": "$(project)"
+      },
+      {
+        "command": "linear.clearGrouping",
+        "title": "Clear Grouping",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "linear.filterByStatus",
+        "title": "Filter by Status",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "linear.filterByPriority",
+        "title": "Filter by Priority",
+        "icon": "$(list-filter)"
+      },
+      {
+        "command": "linear.filterByProject",
+        "title": "Filter by Project",
+        "icon": "$(project)"
+      },
+      {
+        "command": "linear.clearFilters",
+        "title": "Clear All Filters",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "linear.toggleCompletedIssues",
+        "title": "Show/Hide Completed Issues",
+        "icon": "$(check)"
+      },
+      {
+        "command": "linear.saveCurrentFilter",
+        "title": "Save Current Filter",
+        "icon": "$(save)"
+      },
+      {
+        "command": "linear.loadSavedFilter",
+        "title": "Load Saved Filter",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "linear.saveAsDefaultFilter",
+        "title": "Save as Default Filter",
+        "icon": "$(save-all)"
+      },
+      {
+        "command": "linear.manageSavedFilters",
+        "title": "Manage Saved Filters",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "linear.searchIssues",
+        "title": "Search Issues",
+        "icon": "$(search)"
+      },
+      {
+        "command": "linear.advancedSearch",
+        "title": "Advanced Search",
+        "icon": "$(search-view-icon)"
+      },
+      {
+        "command": "linear.nextPage",
+        "title": "Next Page",
+        "icon": "$(arrow-right)"
+      },
+      {
+        "command": "linear.previousPage",
+        "title": "Previous Page",
+        "icon": "$(arrow-left)"
+      },
+      {
+        "command": "linear.removeFilter",
+        "title": "Remove Filter",
+        "icon": "$(close)"
+      },
+      {
+        "command": "linear.applyQuickFilter",
+        "title": "Apply Quick Filter",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "linear.toggleFilterIndicators",
+        "title": "Toggle Filter Indicators",
+        "icon": "$(list-filter)"
       }
     ],
     "views": {
@@ -70,27 +170,117 @@
         }
       ]
     },
+    "submenus": [
+      {
+        "id": "linear.groupingMenu",
+        "label": "Group By"
+      },
+      {
+        "id": "linear.filterMenu",
+        "label": "Filter"
+      },
+      {
+        "id": "linear.filterManagementMenu",
+        "label": "Filter Management"
+      }
+    ],
     "menus": {
       "view/title": [
         {
           "command": "linear.refreshIssues",
           "when": "view == linearIssues",
-          "group": "navigation"
+          "group": "navigation@1"
         },
         {
           "command": "linear.filterMyIssues",
           "when": "view == linearIssues",
-          "group": "navigation"
+          "group": "navigation@2"
         },
         {
-          "command": "linear.createIssue",
+          "command": "linear.searchIssues",
           "when": "view == linearIssues",
-          "group": "navigation"
+          "group": "navigation@3"
+        },
+        {
+          "submenu": "linear.groupingMenu",
+          "when": "view == linearIssues",
+          "group": "2_organization@1"
+        },
+        {
+          "submenu": "linear.filterMenu",
+          "when": "view == linearIssues",
+          "group": "2_organization@2"
+        },
+        {
+          "submenu": "linear.filterManagementMenu",
+          "when": "view == linearIssues",
+          "group": "2_organization@3"
+        },
+        {
+          "command": "linear.previousPage",
+          "when": "view == linearIssues",
+          "group": "3_navigation@1"
+        },
+        {
+          "command": "linear.nextPage",
+          "when": "view == linearIssues",
+          "group": "3_navigation@2"
+        }
+      ],
+      "linear.groupingMenu": [
+        {
+          "command": "linear.groupByStatus",
+          "group": "1_grouping"
+        },
+        {
+          "command": "linear.groupByProject",
+          "group": "1_grouping"
+        },
+        {
+          "command": "linear.clearGrouping",
+          "group": "2_clear"
+        }
+      ],
+      "linear.filterMenu": [
+        {
+          "command": "linear.filterByStatus",
+          "group": "1_filters"
+        },
+        {
+          "command": "linear.filterByPriority",
+          "group": "1_filters"
+        },
+        {
+          "command": "linear.filterByProject",
+          "group": "1_filters"
+        },
+        {
+          "command": "linear.toggleCompletedIssues",
+          "group": "2_toggles"
+        },
+        {
+          "command": "linear.clearFilters",
+          "group": "3_clear"
+        }
+      ],
+      "linear.filterManagementMenu": [
+        {
+          "command": "linear.saveCurrentFilter",
+          "group": "1_save"
+        },
+        {
+          "command": "linear.loadSavedFilter",
+          "group": "2_load"
         }
       ],
       "view/item/context": [
         {
           "command": "linear.editIssue",
+          "when": "view == linearIssues",
+          "group": "inline"
+        },
+        {
+          "command": "linear.changeIssueStatus",
           "when": "view == linearIssues",
           "group": "inline"
         }
@@ -103,6 +293,39 @@
           "type": "string",
           "description": "Linear API Token",
           "scope": "window"
+        },
+        "linear.filters": {
+          "type": "object",
+          "description": "Saved filter settings",
+          "scope": "window",
+          "properties": {
+            "defaultFilter": {
+              "type": "object",
+              "description": "Default filter settings",
+              "default": {
+                "includeCompleted": false,
+                "assignedToMe": false
+              }
+            },
+            "savedFilters": {
+              "type": "array",
+              "description": "Custom saved filters",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "description": "Filter name"
+                  },
+                  "criteria": {
+                    "type": "object",
+                    "description": "Filter criteria"
+                  }
+                }
+              },
+              "default": []
+            }
+          }
         }
       }
     }
