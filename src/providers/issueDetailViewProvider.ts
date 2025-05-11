@@ -12,7 +12,7 @@ export class IssueDetailViewProvider implements vscode.WebviewViewProvider {
 
   public resolveWebviewView(
     webviewView: vscode.WebviewView,
-    context: vscode.WebviewViewResolveContext,
+    _context: vscode.WebviewViewResolveContext,
     _token: vscode.CancellationToken
   ) {
     this._view = webviewView;
@@ -55,9 +55,9 @@ export class IssueDetailViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private _getHtmlForWebview(webview: vscode.Webview): string {
+  private _getHtmlForWebview(_webview: vscode.Webview): string {
     const html = `<!DOCTYPE html>
-    <html lang="ja">
+    <html lang="en">
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -115,11 +115,11 @@ export class IssueDetailViewProvider implements vscode.WebviewViewProvider {
         <div class="issue-title"></div>
         <div class="issue-description"></div>
         <div class="comments-section">
-          <h3>コメント</h3>
+          <h3>Comments</h3>
           <div id="comments-container"></div>
           <div class="comment-form">
-            <textarea id="new-comment" placeholder="コメントを入力..."></textarea>
-            <button onclick="addComment()">コメントを追加</button>
+            <textarea id="new-comment" placeholder="Write a comment..."></textarea>
+            <button onclick="addComment()">Add Comment</button>
           </div>
         </div>
       </div>

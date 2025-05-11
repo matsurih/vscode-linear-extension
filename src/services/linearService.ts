@@ -1,4 +1,4 @@
-import { LinearClient } from "@linear/sdk";
+import { LinearClient, Team, IssuePayload } from "@linear/sdk";
 
 export class LinearService {
   private client: LinearClient;
@@ -52,6 +52,60 @@ export class LinearService {
       });
     } catch (error) {
       throw new Error(`Failed to add comment: ${error}`);
+    }
+  }
+
+  public async getTeams(): Promise<Team[]> {
+    try {
+      const teams = await this.client.teams();
+      return teams.nodes;
+    } catch (error) {
+      throw new Error(`Failed to fetch teams: ${error}`);
+    }
+  }
+
+  public async createIssue(input: {
+    teamId: string;
+    title: string;
+    description?: string;
+    assigneeId?: string;
+    stateId?: string;
+  }): Promise<IssuePayload> {
+    try {
+      const issue = await this.client.createIssue(input);
+      return issue;
+    } catch (error) {
+      throw new Error(`Failed to create issue: ${error}`);
+    }
+  }
+
+  public async updateIssue(
+    issueId: string,
+    input: {
+      title?: string;
+      description?: string;
+      assigneeId?: string;
+      stateId?: string;
+    }
+  ): Promise<IssuePayload> {
+    try {
+      const issue = await this.client.updateIssue(issueId, input);
+      return issue;
+    } catch (error) {
+      throw new Error(`Failed to update issue: ${error}`);
+    }
+  }
+
+  public async getWorkflowStates(teamId: string) {
+    try {
+      const states = await this.client.workflowStates({
+        filter: {
+          team: { id: { eq: teamId } },
+        },
+      });
+      return states.nodes;
+    } catch (error) {
+      throw new Error(`Failed to fetch workflow states: ${error}`);
     }
   }
 

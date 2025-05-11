@@ -11,7 +11,8 @@
   ],
   "activationEvents": [
     "onView:linearIssues",
-    "onView:linearIssueDetail"
+    "onView:linearIssueDetail",
+    "onView:linearIssueForm"
   ],
   "main": "./out/src/extension.js",
   "contributes": {
@@ -30,6 +31,16 @@
         "command": "linear.showIssueDetail",
         "title": "Show Issue Detail",
         "icon": "$(info)"
+      },
+      {
+        "command": "linear.createIssue",
+        "title": "Create New Issue",
+        "icon": "$(add)"
+      },
+      {
+        "command": "linear.editIssue",
+        "title": "Edit Issue",
+        "icon": "$(edit)"
       }
     ],
     "views": {
@@ -42,6 +53,11 @@
           "id": "linearIssueDetail",
           "name": "Issue Detail",
           "type": "webview"
+        },
+        {
+          "id": "linearIssueForm",
+          "name": "Issue Form",
+          "type": "webview"
         }
       ]
     },
@@ -51,6 +67,32 @@
           "id": "linear",
           "title": "Linear",
           "icon": "resources/linear.svg"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "linear.refreshIssues",
+          "when": "view == linearIssues",
+          "group": "navigation"
+        },
+        {
+          "command": "linear.filterMyIssues",
+          "when": "view == linearIssues",
+          "group": "navigation"
+        },
+        {
+          "command": "linear.createIssue",
+          "when": "view == linearIssues",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "linear.editIssue",
+          "when": "view == linearIssues",
+          "group": "inline"
         }
       ]
     },
