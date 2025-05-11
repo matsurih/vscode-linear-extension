@@ -1,0 +1,7 @@
+{
+  "dependencies": {
+    "@linear/sdk": "^39.2.1",
+    "@types/node": "^22.15.17",
+    "dotenv": "^16.5.0"
+  }
+}
