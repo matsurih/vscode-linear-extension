@@ -3,6 +3,12 @@
   "displayName": "Linear Issue Manager",
   "description": "VSCode extension for managing Linear issues",
   "version": "0.0.1",
+  "publisher": "matsurih",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/matsurih/vscode-linear-extension"
+  },
+  "license": "MIT",
   "engines": {
     "vscode": "^1.60.0"
   },

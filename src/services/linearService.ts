@@ -192,15 +192,24 @@ export class LinearService {
           error instanceof LinearError &&
           error.message.includes("rate limit")
         ) {
-          await new Promise((resolve) =>
-            setTimeout(resolve, this.RETRY_DELAY * Math.pow(2, i))
+          const waitTime = this.RETRY_DELAY * Math.pow(2, i);
+          console.log(
+            `Rate limit reached. Waiting ${waitTime}ms before retry ${i + 1}/${
+              this.RETRY_COUNT
+            }`
           );
+          await new Promise((resolve) => setTimeout(resolve, waitTime));
           continue;
         }
+        // rate limitエラー以外の場合は即座にエラーをスロー
         throw error;
       }
     }
-    throw lastError;
+    // すべてのリトライが失敗した場合
+    console.error(`Rate limit retry failed after ${this.RETRY_COUNT} attempts`);
+    throw new Error(
+      `Rate limit exceeded. Please try again later. (Last error: ${lastError?.message})`
+    );
   }
 
   private getCached<T>(key: string): T | null {
