@@ -10,24 +10,14 @@
   },
   "license": "MIT",
   "engines": {
-    "vscode": "^1.60.0"
+    "vscode": "^1.75.0"
   },
   "categories": [
     "Other"
   ],
-  "activationEvents": [
-    "onView:linearIssues",
-    "onView:linearIssueDetail",
-    "onView:linearIssueForm"
-  ],
   "main": "./out/src/extension.js",
   "contributes": {
     "commands": [
-      {
-        "command": "linear.authenticate",
-        "title": "Linear: Authenticate",
-        "icon": "$(key)"
-      },
       {
         "command": "linear.refreshIssues",
         "title": "Refresh Issues",
@@ -302,7 +292,8 @@
       "properties": {
         "linear.apiToken": {
           "type": "string",
-          "description": "Linear API Token (非推奨: OAuth2.0認証を使用してください)"
+          "description": "Linear API token",
+          "scope": "window"
         },
         "linear.filters": {
           "type": "object",

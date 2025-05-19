@@ -18,13 +18,7 @@ export async function activate(context: vscode.ExtensionContext) {
     return;
   }
 
-  // 現在の環境のURIスキームを取得
-  const redirectUri = `${vscode.env.uriScheme}://matsurih.vscode-linear-extension/oauth-callback`;
-
-  const linearService = new LinearService(context, {
-    clientId: "978f921d7fbf2c5cd3d96ddb495ffde4",
-    redirectUri: redirectUri,
-  });
+  const linearService = new LinearService(apiToken);
   const issueTreeProvider = new IssueTreeProvider(linearService);
   const issueDetailProvider = new IssueDetailViewProvider(
     context.extensionUri,
@@ -43,68 +37,9 @@ export async function activate(context: vscode.ExtensionContext) {
     showCollapseAll: true,
   });
 
-  // OAuth2.0コールバックの処理
-  context.subscriptions.push(
-    vscode.window.registerUriHandler({
-      handleUri: async (uri: vscode.Uri) => {
-        try {
-          const params = new URLSearchParams(uri.query);
-          const code = params.get("code");
-          const state = params.get("state");
-
-          if (code && state) {
-            await linearService.handleOAuthCallback(code, state);
-            await issueTreeProvider.refresh();
-          }
-        } catch (error) {
-          vscode.window.showErrorMessage(`認証に失敗しました: ${error}`);
-        }
-      },
-    })
-  );
-
-  // 認証状態の確認と初期化
-  context.subscriptions.push(
-    vscode.commands.registerCommand("linear.authenticate", async () => {
-      try {
-        await linearService.initializeOAuth();
-      } catch (error) {
-        vscode.window.showErrorMessage(`認証の初期化に失敗しました: ${error}`);
-      }
-    })
-  );
-
-  // WebViewの登録
-  context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider(
-      IssueDetailViewProvider.viewType,
-      issueDetailProvider
-    ),
-    vscode.window.registerWebviewViewProvider(
-      IssueFormProvider.viewType,
-      issueFormProvider
-    )
-  );
-
   // 初期フィルターの適用
   const defaultFilter = filterService.getDefaultFilter();
   issueTreeProvider.setFilter(defaultFilter);
-
-  // ナビゲーション用コマンドの登録
-  context.subscriptions.push(
-    vscode.commands.registerCommand(
-      "linear.toggleGroupExpansion",
-      (groupId: string) => {
-        issueTreeProvider.toggleGroupExpansion(groupId);
-      }
-    ),
-    vscode.commands.registerCommand("linear.nextPage", () => {
-      issueTreeProvider.nextPage();
-    }),
-    vscode.commands.registerCommand("linear.previousPage", () => {
-      issueTreeProvider.previousPage();
-    })
-  );
 
   // コマンドの登録
   context.subscriptions.push(

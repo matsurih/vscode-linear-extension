@@ -7,8 +7,6 @@ import {
   Issue,
   LinearError,
 } from "@linear/sdk";
-import * as vscode from "vscode";
-import * as crypto from "crypto";
 
 interface CacheItem<T> {
   data: T;
@@ -24,18 +22,12 @@ interface LocalIssue extends Issue {
   _searchText?: string;
 }
 
-interface OAuthConfig {
-  clientId: string;
-  redirectUri: string;
-}
-
 export interface SearchCriteria {
   query?: string;
   labels?: string[];
   teamIds?: string[];
   assigneeIds?: string[];
   createdAfter?: Date;
-  createdBefore?: Date;
   updatedAfter?: Date;
   updatedBefore?: Date;
 }
@@ -47,138 +39,13 @@ export class LinearService {
   private readonly RETRY_DELAY = 1000;
   private cache: Cache = {};
   private lastSyncTime?: string;
-  private context: vscode.ExtensionContext;
-  private config: OAuthConfig;
 
-  constructor(context: vscode.ExtensionContext, config: OAuthConfig) {
-    this.context = context;
-    this.config = config;
-
-    // 保存されているアクセストークンを復元
-    const accessToken = context.globalState.get<string>("linearAccessToken");
-    if (accessToken) {
-      this.client = new LinearClient({ accessToken });
-    }
+  constructor(apiKey: string) {
+    this.initializeClient(apiKey);
   }
 
-  private generateCodeVerifier(): string {
-    return crypto.randomBytes(32).toString("base64url");
-  }
-
-  private async generateCodeChallenge(verifier: string): Promise<string> {
-    const hash = crypto.createHash("sha256");
-    hash.update(verifier);
-    return hash.digest("base64url");
-  }
-
-  public async initializeOAuth(): Promise<void> {
-    try {
-      const codeVerifier = this.generateCodeVerifier();
-      const codeChallenge = await this.generateCodeChallenge(codeVerifier);
-
-      // 認証URLを生成
-      const state = crypto.randomBytes(16).toString("hex");
-      const authUrl = new URL("https://linear.app/oauth/authorize");
-      authUrl.searchParams.append("client_id", this.config.clientId);
-      authUrl.searchParams.append("redirect_uri", this.config.redirectUri);
-      authUrl.searchParams.append("response_type", "code");
-      authUrl.searchParams.append("scope", "read,write,issues:create");
-      authUrl.searchParams.append("state", state);
-      authUrl.searchParams.append("code_challenge", codeChallenge);
-      authUrl.searchParams.append("code_challenge_method", "S256");
-
-      // 状態とcode_verifierを保存
-      await this.context.globalState.update("linearOAuthState", state);
-      await this.context.globalState.update("linearCodeVerifier", codeVerifier);
-
-      // ブラウザで認証URLを開く
-      const result = await vscode.window.showInformationMessage(
-        "Linear への認証が必要です。ブラウザで認証を行いますか？",
-        "認証する"
-      );
-
-      if (result === "認証する") {
-        await vscode.env.openExternal(vscode.Uri.parse(authUrl.toString()));
-      }
-    } catch (error) {
-      vscode.window.showErrorMessage(`認証の準備に失敗しました: ${error}`);
-      throw error;
-    }
-  }
-
-  public async handleOAuthCallback(code: string, state: string): Promise<void> {
-    try {
-      const savedState =
-        this.context.globalState.get<string>("linearOAuthState");
-      const codeVerifier =
-        this.context.globalState.get<string>("linearCodeVerifier");
-
-      if (!savedState || !codeVerifier || savedState !== state) {
-        throw new Error("認証状態が無効です");
-      }
-
-      // アクセストークンを取得
-      const tokenUrl = "https://api.linear.app/oauth/token";
-      const response = await fetch(tokenUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        body: new URLSearchParams({
-          grant_type: "authorization_code",
-          client_id: this.config.clientId,
-          code_verifier: codeVerifier,
-          code: code,
-          redirect_uri: this.config.redirectUri,
-        }).toString(),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(
-          `トークンの取得に失敗しました: ${
-            response.statusText
-          } ${JSON.stringify(errorData)}`
-        );
-      }
-
-      const data = await response.json();
-      const accessToken = data.access_token;
-
-      // アクセストークンを保存
-      await this.context.globalState.update("linearAccessToken", accessToken);
-
-      // クライアントを初期化
-      this.client = new LinearClient({ accessToken });
-
-      // 状態をクリア
-      await this.context.globalState.update("linearOAuthState", undefined);
-      await this.context.globalState.update("linearCodeVerifier", undefined);
-
-      vscode.window.showInformationMessage("Linear への認証が完了しました");
-    } catch (error) {
-      vscode.window.showErrorMessage(`認証に失敗しました: ${error}`);
-      throw error;
-    }
-  }
-
-  public async checkAuthentication(): Promise<boolean> {
-    try {
-      if (!this.client) {
-        return false;
-      }
-      await this.client.viewer;
-      return true;
-    } catch (error) {
-      return false;
-    }
-  }
-
-  public async logout(): Promise<void> {
-    await this.context.globalState.update("linearAccessToken", undefined);
-    this.client = undefined as any;
-    this.cache = {};
-    vscode.window.showInformationMessage("Linear からログアウトしました");
+  private initializeClient(apiKey: string): void {
+    this.client = new LinearClient({ apiKey });
   }
 
   private async withRetry<T>(operation: () => Promise<T>): Promise<T> {
@@ -201,15 +68,10 @@ export class LinearService {
           await new Promise((resolve) => setTimeout(resolve, waitTime));
           continue;
         }
-        // rate limitエラー以外の場合は即座にエラーをスロー
         throw error;
       }
     }
-    // すべてのリトライが失敗した場合
-    console.error(`Rate limit retry failed after ${this.RETRY_COUNT} attempts`);
-    throw new Error(
-      `Rate limit exceeded. Please try again later. (Last error: ${lastError?.message})`
-    );
+    throw lastError;
   }
 
   private getCached<T>(key: string): T | null {
@@ -267,18 +129,10 @@ export class LinearService {
     }
   }
 
-  private async ensureAuthenticated(): Promise<void> {
-    const isAuthenticated = await this.checkAuthentication();
-    if (!isAuthenticated) {
-      await this.initializeOAuth();
-    }
-  }
-
   public async getIssues(
     filterMine: boolean = false,
     includeCompleted: boolean = false
   ) {
-    await this.ensureAuthenticated();
     const cacheKey = `issues:${filterMine}:${includeCompleted}`;
     const cached = this.getCached<LocalIssue[]>(cacheKey);
 
@@ -302,7 +156,16 @@ export class LinearService {
 
       // 初回またはキャッシュ無効時の全件取得
       const result = await this.withRetry(async () => {
+        const filter: any = {};
+        if (filterMine) {
+          const me = await this.client.viewer;
+          filter.assignee = { id: { eq: me.id } };
+        }
+        if (!includeCompleted) {
+          filter.state = { type: { neq: "completed" } };
+        }
         const issues = await this.client.issues({
+          filter,
           first: 100,
         });
         return issues.nodes.map((i) => this.createSearchIndex(i));
@@ -310,7 +173,7 @@ export class LinearService {
 
       this.setCache(cacheKey, result);
       this.lastSyncTime = new Date().toISOString();
-      return this.filterIssues(result, filterMine, includeCompleted);
+      return result;
     } catch (error) {
       if (cached) {
         return this.filterIssues(cached, filterMine, includeCompleted);
@@ -325,14 +188,22 @@ export class LinearService {
     includeCompleted: boolean
   ): Promise<LocalIssue[]> {
     try {
-      const me = await this.client.viewer;
+      if (filterMine) {
+        const me = await this.client.viewer;
+        return issues.filter((issue) => {
+          if (
+            !issue.assignee ||
+            (issue.assignee as any).id !== (me as any).id
+          ) {
+            return false;
+          }
+          if (!includeCompleted && (issue.state as any)?.type === "completed") {
+            return false;
+          }
+          return true;
+        });
+      }
       return issues.filter((issue) => {
-        if (
-          filterMine &&
-          (!issue.assignee || (issue.assignee as any).id !== (me as any).id)
-        ) {
-          return false;
-        }
         if (!includeCompleted && (issue.state as any)?.type === "completed") {
           return false;
         }
@@ -385,13 +256,6 @@ export class LinearService {
         if (
           criteria.createdAfter &&
           new Date(issue.createdAt) < criteria.createdAfter
-        ) {
-          return false;
-        }
-
-        if (
-          criteria.createdBefore &&
-          new Date(issue.createdAt) > criteria.createdBefore
         ) {
           return false;
         }
@@ -559,7 +423,7 @@ export class LinearService {
   }
 
   public updateApiToken(apiToken: string) {
-    this.client = new LinearClient({ apiKey: apiToken });
+    this.initializeClient(apiToken);
   }
 
   public async getLabels(): Promise<{ id: string; name: string }[]> {
