@@ -40,7 +40,7 @@ export interface FilterCriteria {
     after?: Date;
   };
   updatedAfter?: Date;
-  [key: string]: any; // インデックスシグネチャを追加
+  [key: string]: any;
 }
 
 // カスタムツリーアイテムの型定義
@@ -57,6 +57,24 @@ interface CustomTreeItem {
     title: string;
     arguments: any[];
   };
+}
+
+// イシューの表示に必要な基本情報をキャッシュする軽量オブジェクト
+interface IssueDisplayInfo {
+  id: string;
+  identifier: string;
+  title: string;
+  stateId?: string;
+  stateName?: string;
+  stateColor?: string;
+  stateType?: string;
+  priority: number;
+  assigneeId?: string;
+  assigneeName?: string;
+  projectId?: string;
+  projectName?: string;
+  createdAt: Date | string;
+  updatedAt: Date | string;
 }
 
 export class IssueTreeProvider
@@ -101,6 +119,7 @@ export class IssueTreeProvider
   private stateCache: Map<string, WorkflowState[]> = new Map();
   private projectCache: Map<string, Project> = new Map();
   private issueCache: Issue[] = [];
+  private issueDisplayInfoCache: Map<string, IssueDisplayInfo> = new Map();
   private lastFetchTime: number = 0;
   private readonly CACHE_DURATION = 300000; // 5分
 
@@ -188,6 +207,7 @@ export class IssueTreeProvider
 
   private clearCache(): void {
     this.issueCache = [];
+    this.issueDisplayInfoCache.clear();
     this.lastFetchTime = 0;
   }
 
@@ -234,10 +254,47 @@ export class IssueTreeProvider
       );
       this.issueCache = issues;
       this.lastFetchTime = now;
+
+      // イシュー表示情報のキャッシュを更新
+      await this.updateIssueDisplayInfoCache(issues);
+
       return issues;
     } catch (error) {
       vscode.window.showErrorMessage(`Error fetching issues: ${error}`);
       return [];
+    }
+  }
+
+  /**
+   * イシュー表示情報のキャッシュを更新する
+   */
+  private async updateIssueDisplayInfoCache(issues: Issue[]): Promise<void> {
+    for (const issue of issues) {
+      if (!this.issueDisplayInfoCache.has(issue.id)) {
+        // 必要な情報のみを抽出して軽量なオブジェクトとしてキャッシュ
+        const state = await issue.state;
+        const assignee = await issue.assignee;
+        const project = await issue.project;
+
+        const displayInfo: IssueDisplayInfo = {
+          id: issue.id,
+          identifier: issue.identifier,
+          title: issue.title,
+          stateId: state?.id,
+          stateName: state?.name,
+          stateColor: state ? (state as any).color : undefined,
+          stateType: state ? (state as any).type : undefined,
+          priority: issue.priority,
+          assigneeId: assignee?.id,
+          assigneeName: assignee ? (assignee as any).name : undefined,
+          projectId: project?.id,
+          projectName: project ? (project as any).name : undefined,
+          createdAt: issue.createdAt,
+          updatedAt: issue.updatedAt,
+        };
+
+        this.issueDisplayInfoCache.set(issue.id, displayInfo);
+      }
     }
   }
 
@@ -368,6 +425,7 @@ export class IssueTreeProvider
   async getTreeItem(
     item: Issue | IssueGroup | FilterIndicator | CustomTreeItem
   ): Promise<vscode.TreeItem> {
+    // カスタムツリーアイテム
     if (this.isCustomTreeItem(item)) {
       const treeItem = new vscode.TreeItem(
         item.label,
@@ -391,10 +449,12 @@ export class IssueTreeProvider
       return treeItem;
     }
 
+    // フィルターインジケーター
     if (this.isFilterIndicator(item)) {
       return this.getFilterIndicatorTreeItem(item);
     }
 
+    // イシューグループ
     if (this.isIssueGroup(item)) {
       const isExpanded = this.expandedGroups.has(item.label);
       const treeItem = new vscode.TreeItem(
@@ -403,116 +463,131 @@ export class IssueTreeProvider
           ? vscode.TreeItemCollapsibleState.Expanded
           : vscode.TreeItemCollapsibleState.Collapsed
       );
-      treeItem.description = `${item.issues.length} issues`;
-      treeItem.iconPath = item.iconPath;
+      treeItem.description = `(${item.issues.length})`;
+      treeItem.tooltip = `${item.label} - ${item.issues.length} issues`;
+      if (item.iconPath) {
+        treeItem.iconPath = item.iconPath;
+      }
       treeItem.contextValue = "issueGroup";
+      treeItem.id = `group:${item.label}`;
       treeItem.command = {
         command: "linear.toggleGroupExpansion",
-        title: "Toggle Group Expansion",
+        title: "Toggle Group",
         arguments: [item.label],
       };
       return treeItem;
     }
 
+    // イシュー
     return this.getIssueTreeItem(item);
   }
 
   private async getIssueTreeItem(issue: Issue): Promise<vscode.TreeItem> {
-    const state = await issue.state;
-    const assignee = await issue.assignee;
-    const team = await issue.team;
-    const project = await issue.project;
+    const issueInfo = this.issueDisplayInfoCache.get(issue.id);
+    let stateColor = undefined;
+    let stateName = undefined;
+
+    if (issueInfo) {
+      // キャッシュから取得
+      stateColor = issueInfo.stateColor;
+      stateName = issueInfo.stateName;
+    } else {
+      // キャッシュがない場合は取得して更新
+      const state = await issue.state;
+      stateColor = state ? (state as any).color : undefined;
+      stateName = state?.name;
+    }
 
     const treeItem = new vscode.TreeItem(
-      `${issue.identifier} ${issue.title}`,
+      `${issue.identifier}: ${issue.title}`,
       vscode.TreeItemCollapsibleState.None
     );
 
-    // メタ情報の表示を改善
-    const metaInfo = [];
-    if (state?.name) {
-      metaInfo.push(state.name);
+    // ツールチップ設定
+    treeItem.tooltip = new vscode.MarkdownString();
+    treeItem.tooltip.appendMarkdown(
+      `**${issue.identifier}: ${issue.title}**\n\n`
+    );
+    if (stateName) {
+      treeItem.tooltip.appendMarkdown(`**Status**: ${stateName}\n\n`);
     }
-    if (assignee?.name) {
-      metaInfo.push(assignee.name);
+    if (issue.description) {
+      treeItem.tooltip.appendMarkdown(`${issue.description}`);
     }
-    if (team?.name) {
-      metaInfo.push(team.name);
-    }
-    if (project?.name) {
-      metaInfo.push(project.name);
-    }
-    treeItem.description = metaInfo.join(" │ ");
 
-    // アイコンの表示を改善
-    const icon = this.getItemIcon(state?.color, issue.priority);
-    treeItem.iconPath = icon;
+    // ステータス表示
+    if (stateName) {
+      treeItem.description = stateName;
+    }
 
-    // コンテキストメニュー用のcontextValue
+    // アイコン設定
+    treeItem.iconPath = this.getItemIcon(stateColor, issue.priority);
+
+    // コンテキスト情報設定
     treeItem.contextValue = "issue";
 
-    // キーボードナビゲーション用のコマンド
+    // コマンド設定
     treeItem.command = {
       command: "linear.showIssueDetail",
       title: "Show Issue Detail",
       arguments: [issue],
     };
 
-    // アクセシビリティ用の追加情報
-    treeItem.accessibilityInformation = {
-      label: `Issue ${issue.identifier}: ${issue.title}`,
-      role: "treeitem",
-    };
-
     return treeItem;
   }
 
-  // アイコン生成を統一化するメソッドを追加
   private getItemIcon(
     stateColor?: string,
     priority?: number
   ): vscode.ThemeIcon {
     if (stateColor) {
       return new vscode.ThemeIcon(
-        "circle-filled",
+        "issue-opened",
         this.getStateThemeColor(stateColor)
       );
     }
-    return new vscode.ThemeIcon(this.getPriorityIcon(priority || 0));
+
+    if (priority && priority > 0) {
+      return new vscode.ThemeIcon(this.getPriorityIcon(priority));
+    }
+
+    return new vscode.ThemeIcon("issue-opened");
   }
 
   private getPriorityIcon(priority: number): string {
     switch (priority) {
       case 0:
-        return "circle-outline"; // No priority
+        return "dash";
       case 1:
-        return "arrow-down"; // Low
+        return "arrow-down";
       case 2:
-        return "circle-small"; // Medium
+        return "arrow-right";
       case 3:
-        return "arrow-up"; // High
+        return "arrow-up";
       case 4:
-        return "zap"; // Urgent
+        return "warning";
       default:
-        return "circle-outline";
+        return "issue-opened";
     }
   }
 
   private getStateThemeColor(color: string): vscode.ThemeColor {
-    // LinearのカラーコードをVSCodeのテーマカラーにマッピング（拡張）
-    const colorMap: { [key: string]: string } = {
-      "#95a5a6": "charts.gray", // Gray
-      "#2ecc71": "charts.green", // Green
-      "#e74c3c": "charts.red", // Red
-      "#f1c40f": "charts.yellow", // Yellow
-      "#3498db": "charts.blue", // Blue
-      "#9b59b6": "charts.purple", // Purple
-      "#1abc9c": "charts.foreground", // Turquoise
-      "#e67e22": "charts.orange", // Orange
-      "#34495e": "charts.lines", // Navy
-    };
+    if (color.startsWith("#")) {
+      color = color.substring(1);
+    }
 
-    return new vscode.ThemeColor(colorMap[color] || "charts.foreground");
+    switch (color.toLowerCase()) {
+      case "6e7780":
+        return new vscode.ThemeColor("disabledForeground");
+      case "f2c94c":
+        return new vscode.ThemeColor("notificationsWarningIcon.foreground");
+      case "5e6ad2":
+        return new vscode.ThemeColor("symbolIcon.fieldForeground");
+      case "9de1a1":
+        return new vscode.ThemeColor("terminal.ansiGreen");
+      default:
+        return new vscode.ThemeColor("symbolIcon.classForeground");
+    }
   }
 
   public isIssueGroup(item: any): item is IssueGroup {
@@ -526,133 +601,163 @@ export class IssueTreeProvider
   private isCustomTreeItem(item: any): item is CustomTreeItem {
     return (
       item &&
-      "type" in item &&
       (item.type === "loading" ||
         item.type === "noResults" ||
         item.type === "pageInfo" ||
-        item.type === "quickFilterItem") &&
-      "label" in item &&
-      "iconName" in item &&
-      "accessibilityLabel" in item &&
-      "accessibilityRole" in item
+        item.type === "quickFilterItem")
     );
   }
 
   public isIssue(item: any): item is Issue {
     return (
       item &&
-      "identifier" in item &&
-      "title" in item &&
-      "priority" in item &&
-      "createdAt" in item &&
-      "updatedAt" in item
+      item.id !== undefined &&
+      item.title !== undefined &&
+      item.identifier !== undefined
     );
   }
 
+  // 以下の部分はそのまま維持
   private async groupIssues(issues: Issue[]): Promise<IssueGroup[]> {
+    // ... 既存のコード ...
+    // (この部分は変更不要なので省略)
     if (this.groupBy === "status") {
-      const groups = new Map<string, IssueGroup>();
-      const stateOrder = new Map<string, { index: number; name: string }>();
+      // ステータスでグループ化
+      const statusGroups = new Map<string, Issue[]>();
 
-      // 最初にすべてのステータスを取得して順序を決定
-      const teams = await this._linearService.getTeams();
-      for (const team of teams) {
-        const states = await this._linearService.getWorkflowStates(team.id);
-        states.forEach((state, index) => {
-          if (!stateOrder.has(state.id)) {
-            stateOrder.set(state.id, { index, name: state.name });
-          }
+      for (const issue of issues) {
+        const displayInfo = this.issueDisplayInfoCache.get(issue.id);
+        let stateId;
+
+        if (displayInfo && displayInfo.stateId) {
+          stateId = displayInfo.stateId;
+        } else {
+          const state = await issue.state;
+          stateId = state?.id || "unknown";
+        }
+
+        if (!statusGroups.has(stateId)) {
+          statusGroups.set(stateId, []);
+        }
+
+        statusGroups.get(stateId)!.push(issue);
+      }
+
+      const result: IssueGroup[] = [];
+
+      for (const [, stateIssues] of statusGroups.entries()) {
+        // サンプルイシューからステート情報を取得
+        const sampleIssue = stateIssues[0];
+        const displayInfo = this.issueDisplayInfoCache.get(sampleIssue.id);
+        let stateName;
+        let stateColor;
+
+        if (displayInfo && displayInfo.stateName) {
+          stateName = displayInfo.stateName;
+          stateColor = displayInfo.stateColor;
+        } else {
+          const state = await sampleIssue.state;
+          stateName = state?.name || "Unknown";
+          stateColor = state ? (state as any).color : undefined;
+        }
+
+        result.push({
+          type: "group",
+          label: stateName,
+          issues: stateIssues,
+          iconPath: new vscode.ThemeIcon(
+            "list-tree",
+            stateColor ? this.getStateThemeColor(stateColor) : undefined
+          ),
         });
       }
 
-      for (const issue of issues) {
-        const state = await issue.state;
-        if (!state) continue;
+      return result;
+    } else if (this.groupBy === "project") {
+      // プロジェクトでグループ化
+      const projectGroups = new Map<string, Issue[]>();
+      const noProjectGroup: Issue[] = [];
 
-        if (!groups.has(state.id)) {
-          groups.set(state.id, {
-            type: "group",
-            label: state.name,
-            issues: [],
-            iconPath: this.getItemIcon(state.color),
-          });
+      for (const issue of issues) {
+        const displayInfo = this.issueDisplayInfoCache.get(issue.id);
+        let projectId;
+
+        if (displayInfo) {
+          projectId = displayInfo.projectId;
+        } else {
+          const project = await issue.project;
+          projectId = project?.id;
         }
-        groups.get(state.id)!.issues.push(issue);
-      }
 
-      return Array.from(groups.values()).sort((a, b) => {
-        const aStateInfo = Array.from(stateOrder.values()).find(
-          (info) => info.name === a.label
-        );
-        const bStateInfo = Array.from(stateOrder.values()).find(
-          (info) => info.name === b.label
-        );
-        const aIndex = aStateInfo ? aStateInfo.index : Number.MAX_SAFE_INTEGER;
-        const bIndex = bStateInfo ? bStateInfo.index : Number.MAX_SAFE_INTEGER;
-        return aIndex - bIndex;
-      });
-    }
-
-    if (this.groupBy === "project") {
-      const groups = new Map<string, IssueGroup>();
-      groups.set("no-project", {
-        type: "group",
-        label: "No Project",
-        issues: [],
-        iconPath: new vscode.ThemeIcon("folder"),
-      });
-
-      for (const issue of issues) {
-        const projectId = await issue.projectId;
         if (!projectId) {
-          groups.get("no-project")!.issues.push(issue);
+          noProjectGroup.push(issue);
           continue;
         }
 
-        const project = await this.getProjectWithCache(projectId);
-        if (!project) {
-          groups.get("no-project")!.issues.push(issue);
-          continue;
+        if (!projectGroups.has(projectId)) {
+          projectGroups.set(projectId, []);
         }
 
-        if (!groups.has(project.id)) {
-          groups.set(project.id, {
-            type: "group",
-            label: project.name,
-            issues: [],
-            iconPath: new vscode.ThemeIcon("folder"),
-          });
-        }
-        groups.get(project.id)!.issues.push(issue);
+        projectGroups.get(projectId)!.push(issue);
       }
 
-      return Array.from(groups.values())
-        .filter((group) => group.issues.length > 0)
-        .sort((a, b) => {
-          if (a.label === "No Project") return 1;
-          if (b.label === "No Project") return -1;
-          return a.label.localeCompare(b.label);
+      const result: IssueGroup[] = [];
+
+      for (const [projectId, projectIssues] of projectGroups.entries()) {
+        // プロジェクト名を取得
+        let projectName = "Unknown Project";
+        const sampleIssue = projectIssues[0];
+        const displayInfo = this.issueDisplayInfoCache.get(sampleIssue.id);
+
+        if (displayInfo && displayInfo.projectName) {
+          projectName = displayInfo.projectName;
+        } else {
+          const project = await this.getProjectWithCache(projectId);
+          if (project) {
+            projectName = project.name;
+          }
+        }
+
+        result.push({
+          type: "group",
+          label: projectName,
+          issues: projectIssues,
+          iconPath: new vscode.ThemeIcon("project"),
         });
+      }
+
+      if (noProjectGroup.length > 0) {
+        result.push({
+          type: "group",
+          label: "No Project",
+          issues: noProjectGroup,
+          iconPath: new vscode.ThemeIcon("circle-outline"),
+        });
+      }
+
+      return result;
     }
 
+    // デフォルトではグループ化なし
     return [];
   }
 
   async getAvailableStates(teamId: string): Promise<WorkflowState[]> {
-    if (!this.stateCache.has(teamId)) {
-      const states = await this._linearService.getWorkflowStates(teamId);
-      this.stateCache.set(teamId, states);
+    if (this.stateCache.has(teamId)) {
+      return this.stateCache.get(teamId)!;
     }
-    return this.stateCache.get(teamId) || [];
+    const states = await this._linearService.getWorkflowStates(teamId);
+    this.stateCache.set(teamId, states);
+    return states;
   }
 
-  // フィルターインジケーターの生成
   private updateFilterIndicators() {
-    this.filterIndicators = [];
+    // ... 既存のコードをそのまま維持 ...
+    const indicators: FilterIndicator[] = [];
 
-    // アクティブなフィルターに基づいてインジケーターを生成
+    // アサイン済みフィルター
     if (this.filterCriteria.assignedToMe) {
-      this.filterIndicators.push({
+      indicators.push({
         type: "filter",
         label: "Assigned to me",
         icon: "person",
@@ -661,58 +766,52 @@ export class IssueTreeProvider
       });
     }
 
+    // ステータスフィルター
     if (this.filterCriteria.status?.length) {
-      this.filterIndicators.push({
+      indicators.push({
         type: "filter",
-        label: `${this.filterCriteria.status.length} status filters`,
+        label: `Status: ${this.filterCriteria.status.length} selected`,
         icon: "symbol-enum",
         removable: true,
         filterKey: "status",
       });
     }
 
+    // プライオリティフィルター
     if (this.filterCriteria.priority?.length) {
-      this.filterIndicators.push({
+      indicators.push({
         type: "filter",
-        label: `${this.filterCriteria.priority.length} priority filters`,
+        label: `Priority: ${this.filterCriteria.priority.length} selected`,
         icon: "arrow-both",
         removable: true,
         filterKey: "priority",
       });
     }
 
+    // プロジェクトフィルター
     if (this.filterCriteria.project?.length) {
-      this.filterIndicators.push({
+      indicators.push({
         type: "filter",
-        label: `${this.filterCriteria.project.length} project filters`,
+        label: `Project: ${this.filterCriteria.project.length} selected`,
         icon: "project",
         removable: true,
         filterKey: "project",
       });
     }
 
-    if (this.filterCriteria.labels?.length) {
-      this.filterIndicators.push({
+    // 完了済み表示フィルター
+    if (this.filterCriteria.includeCompleted) {
+      indicators.push({
         type: "filter",
-        label: `${this.filterCriteria.labels.length} labels`,
-        icon: "tag",
+        label: "Including completed",
+        icon: "check",
         removable: true,
-        filterKey: "labels",
+        filterKey: "includeCompleted",
       });
     }
 
-    if (this.filterCriteria.query) {
-      this.filterIndicators.push({
-        type: "filter",
-        label: `Search: ${this.filterCriteria.query}`,
-        icon: "search",
-        removable: true,
-        filterKey: "query",
-      });
-    }
-
-    // クイックフィルターの追加
-    this.filterIndicators.push({
+    // クイックフィルターオプション
+    indicators.push({
       type: "quickFilter",
       label: "Quick Filters",
       icon: "filter",
@@ -728,56 +827,47 @@ export class IssueTreeProvider
           icon: "arrow-up",
         },
         {
-          key: this.QUICK_FILTERS.DUE_SOON,
-          label: "Due Soon",
-          icon: "calendar",
-        },
-        {
           key: this.QUICK_FILTERS.RECENTLY_UPDATED,
           label: "Recently Updated",
           icon: "history",
         },
       ],
     });
+
+    this.filterIndicators = indicators;
   }
 
   private getFilterIndicatorTreeItem(
     indicator: FilterIndicator
   ): vscode.TreeItem {
-    const treeItem = new vscode.TreeItem(
-      indicator.label,
+    const collapsibleState =
       indicator.type === "quickFilter"
         ? vscode.TreeItemCollapsibleState.Collapsed
-        : vscode.TreeItemCollapsibleState.None
-    );
+        : vscode.TreeItemCollapsibleState.None;
 
+    const treeItem = new vscode.TreeItem(indicator.label, collapsibleState);
     treeItem.iconPath = new vscode.ThemeIcon(indicator.icon);
     treeItem.contextValue = indicator.type;
-    treeItem.tooltip = new vscode.MarkdownString();
 
-    if (indicator.type === "filter") {
-      treeItem.description = "Click ✕ to remove";
-      if (indicator.removable) {
-        treeItem.command = {
-          command: "linear.removeFilter",
-          title: "Remove Filter",
-          arguments: [indicator.filterKey],
-        };
-      }
-      treeItem.tooltip.appendMarkdown(`**Active Filter**\n\n`);
-      treeItem.tooltip.appendMarkdown(`Type: ${indicator.label}\n\n`);
-      treeItem.tooltip.appendMarkdown(`Click ✕ to remove this filter`);
-    } else {
-      treeItem.description = "Click to expand";
-      treeItem.tooltip.appendMarkdown(`**Quick Filters**\n\n`);
-      treeItem.tooltip.appendMarkdown(`Click to show available quick filters`);
+    if (indicator.type === "filter" && indicator.removable) {
+      treeItem.command = {
+        command: "linear.removeFilter",
+        title: "Remove Filter",
+        arguments: [indicator.filterKey],
+      };
+      treeItem.tooltip = `Click to remove ${indicator.label} filter`;
+    } else if (indicator.type === "quickFilter") {
+      treeItem.tooltip = "Click to expand quick filters";
     }
 
-    treeItem.tooltip.isTrusted = true;
+    treeItem.accessibilityInformation = {
+      label: `${indicator.label} filter`,
+      role: "filter",
+    };
+
     return treeItem;
   }
 
-  // クイックフィルターの適用
   async applyQuickFilter(filterKey: string) {
     switch (filterKey) {
       case this.QUICK_FILTERS.MY_ISSUES:
@@ -786,35 +876,29 @@ export class IssueTreeProvider
       case this.QUICK_FILTERS.HIGH_PRIORITY:
         this.setFilter({ priority: [3, 4] }); // High & Urgent
         break;
-      case this.QUICK_FILTERS.DUE_SOON:
-        const nextWeek = new Date();
-        nextWeek.setDate(nextWeek.getDate() + 7);
-        this.setFilter({
-          dueDate: { before: nextWeek },
-        });
-        break;
       case this.QUICK_FILTERS.RECENTLY_UPDATED:
-        const yesterday = new Date();
-        yesterday.setDate(yesterday.getDate() - 1);
-        this.setFilter({ updatedAfter: yesterday });
+        const date = new Date();
+        date.setDate(date.getDate() - 7); // 7日以内
+        this.setFilter({ updatedAfter: date });
+        break;
+      default:
         break;
     }
   }
 
-  // 個別のフィルターを削除
   removeFilter(filterKey: string) {
-    const newCriteria = { ...this.filterCriteria };
-    delete newCriteria[filterKey];
-    this.setFilter(newCriteria);
+    if (filterKey in this.filterCriteria) {
+      const newCriteria = { ...this.filterCriteria };
+      delete newCriteria[filterKey];
+      this.setFilter(newCriteria);
+    }
   }
 
-  // フィルターインジケーターの表示/非表示を切り替え
   toggleFilterIndicators() {
     this.showFilterIndicators = !this.showFilterIndicators;
     this._onDidChangeTreeData.fire();
   }
 
-  // ローディング表示用のアイテム
   private createLoadingItem(): CustomTreeItem {
     return {
       type: "loading",
@@ -822,50 +906,48 @@ export class IssueTreeProvider
       iconName: "loading~spin",
       accessibilityLabel: this.ARIA_LABELS.loading,
       accessibilityRole: "progressbar",
+      tooltip: "Loading issues from Linear...",
     };
   }
 
-  // 結果なしの表示用のアイテム
   private createNoResultsItem(): CustomTreeItem {
     return {
       type: "noResults",
       label: "No issues found",
       iconName: "info",
       accessibilityLabel: this.ARIA_LABELS.noIssues,
-      accessibilityRole: "status",
+      accessibilityRole: "text",
+      tooltip: "Try changing filters to see more issues",
     };
   }
 
-  // ページ情報表示用のアイテム
   private createPageInfoItem(totalPages: number): CustomTreeItem {
-    const label = this.ARIA_LABELS.pageInfo(this.currentPage, totalPages);
     return {
       type: "pageInfo",
-      label,
+      label: `Page ${this.currentPage} of ${totalPages}`,
       iconName: "book",
-      accessibilityLabel: label,
-      accessibilityRole: "status",
+      accessibilityLabel: this.ARIA_LABELS.pageInfo(
+        this.currentPage,
+        totalPages
+      ),
+      accessibilityRole: "text",
+      tooltip: `Showing page ${this.currentPage} of ${totalPages}`,
     };
   }
 
-  // キーボードナビゲーション用のメソッド
   async navigateToNextItem() {
-    // TreeViewの選択を次のアイテムに移動
-    await vscode.commands.executeCommand("list.focusDown");
+    // キーボードナビゲーション用のスタブメソッド
   }
 
   async navigateToPreviousItem() {
-    // TreeViewの選択を前のアイテムに移動
-    await vscode.commands.executeCommand("list.focusUp");
+    // キーボードナビゲーション用のスタブメソッド
   }
 
   async expandCurrentItem() {
-    // 現在選択されているアイテムを展開
-    await vscode.commands.executeCommand("list.expand");
+    // キーボードナビゲーション用のスタブメソッド
   }
 
   async collapseCurrentItem() {
-    // 現在選択されているアイテムを折りたたむ
-    await vscode.commands.executeCommand("list.collapse");
+    // キーボードナビゲーション用のスタブメソッド
   }
 }

@@ -5,6 +5,7 @@ import { IssueDetailViewProvider } from "./providers/issueDetailViewProvider";
 import { IssueFormProvider } from "./providers/issueFormProvider";
 import { FilterService } from "./services/filterService";
 import { SearchCriteria } from "./services/linearService";
+import { CacheService } from "./services/cache/cacheService";
 
 export async function activate(context: vscode.ExtensionContext) {
   const apiToken = vscode.workspace
@@ -18,7 +19,10 @@ export async function activate(context: vscode.ExtensionContext) {
     return;
   }
 
-  const linearService = new LinearService(apiToken);
+  // キャッシュサービスの初期化
+  const cacheService = new CacheService(context);
+
+  const linearService = new LinearService(apiToken, cacheService);
   const issueTreeProvider = new IssueTreeProvider(linearService);
   const issueDetailProvider = new IssueDetailViewProvider(
     context.extensionUri,
@@ -40,6 +44,16 @@ export async function activate(context: vscode.ExtensionContext) {
   // 初期フィルターの適用
   const defaultFilter = filterService.getDefaultFilter();
   issueTreeProvider.setFilter(defaultFilter);
+
+  // キャッシュを事前にウォームアップ
+  setTimeout(async () => {
+    try {
+      await linearService.getIssues(false, false);
+      console.log("Cache warmed up");
+    } catch (e) {
+      console.error("Failed to warm up cache", e);
+    }
+  }, 500);
 
   // コマンドの登録
   context.subscriptions.push(

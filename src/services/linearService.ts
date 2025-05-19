@@ -7,17 +7,7 @@ import {
   Issue,
   LinearError,
 } from "@linear/sdk";
-
-interface CacheItem<T> {
-  data: T;
-  timestamp: number;
-  lastUpdate?: string;
-}
-
-interface Cache {
-  [key: string]: CacheItem<any>;
-}
-
+import { CacheService } from "./cache/cacheService";
 interface LocalIssue extends Issue {
   _searchText?: string;
 }
@@ -34,14 +24,14 @@ export interface SearchCriteria {
 
 export class LinearService {
   private client!: LinearClient;
-  private readonly CACHE_TTL = 5 * 60 * 1000;
   private readonly RETRY_COUNT = 3;
   private readonly RETRY_DELAY = 1000;
-  private cache: Cache = {};
+  private cacheService: CacheService;
   private lastSyncTime?: string;
 
-  constructor(apiKey: string) {
+  constructor(apiKey: string, cacheService: CacheService) {
     this.initializeClient(apiKey);
+    this.cacheService = cacheService;
   }
 
   private initializeClient(apiKey: string): void {
@@ -72,23 +62,6 @@ export class LinearService {
       }
     }
     throw lastError;
-  }
-
-  private getCached<T>(key: string): T | null {
-    const item = this.cache[key];
-    if (!item) return null;
-    if (Date.now() - item.timestamp > this.CACHE_TTL) {
-      delete this.cache[key];
-      return null;
-    }
-    return item.data;
-  }
-
-  private setCache<T>(key: string, data: T): void {
-    this.cache[key] = {
-      data,
-      timestamp: Date.now(),
-    };
   }
 
   private createSearchIndex(issue: Issue): LocalIssue {
@@ -129,31 +102,36 @@ export class LinearService {
     }
   }
 
+  /**
+   * 課題一覧を取得する
+   * キャッシュがある場合は差分更新を行い、なければ全件取得する
+   */
   public async getIssues(
     filterMine: boolean = false,
     includeCompleted: boolean = false
   ) {
     const cacheKey = `issues:${filterMine}:${includeCompleted}`;
-    const cached = this.getCached<LocalIssue[]>(cacheKey);
+    console.log("Attempting to get issues from cache:", cacheKey);
+    const cached = this.cacheService.get<LocalIssue[]>(cacheKey);
 
-    try {
-      // 差分更新の実行
-      if (cached && this.lastSyncTime) {
-        const updatedIssues = await this.fetchUpdatedIssues(this.lastSyncTime);
-        if (updatedIssues.length > 0) {
-          const updatedIds = new Set(updatedIssues.map((i) => i.id));
-          const filteredCache = cached.filter((i) => !updatedIds.has(i.id));
-          const newIssues = [
-            ...filteredCache,
-            ...updatedIssues.map((i) => this.createSearchIndex(i)),
-          ];
-          this.setCache(cacheKey, newIssues);
-          this.lastSyncTime = new Date().toISOString();
-          return this.filterIssues(newIssues, filterMine, includeCompleted);
-        }
-        return this.filterIssues(cached, filterMine, includeCompleted);
+    if (cached) {
+      console.log("Cache hit! Found", cached.length, "issues in cache");
+      // バックグラウンドで非同期更新
+      if (this.lastSyncTime) {
+        // setTimeoutを使って非同期処理を確実に後回しにする
+        setTimeout(() => {
+          this.updateIssuesInBackground(
+            cacheKey,
+            this.lastSyncTime || new Date().toISOString(),
+            cached
+          ).catch((err) => console.error("Background update failed:", err));
+        }, 100);
       }
+      return this.filterIssues(cached, filterMine, includeCompleted);
+    }
 
+    console.log("Cache miss, fetching from API");
+    try {
       // 初回またはキャッシュ無効時の全件取得
       const result = await this.withRetry(async () => {
         const filter: any = {};
@@ -168,17 +146,45 @@ export class LinearService {
           filter,
           first: 100,
         });
+        console.log(`Fetched ${issues.nodes.length} issues from API`);
         return issues.nodes.map((i) => this.createSearchIndex(i));
       });
 
-      this.setCache(cacheKey, result);
+      this.cacheService.set(cacheKey, result, new Date().toISOString());
       this.lastSyncTime = new Date().toISOString();
       return result;
     } catch (error) {
+      console.error("Error fetching issues:", error);
       if (cached) {
+        console.log("Using stale cache due to fetch error");
         return this.filterIssues(cached, filterMine, includeCompleted);
       }
       throw new Error(`Failed to fetch issues: ${error}`);
+    }
+  }
+
+  /**
+   * バックグラウンドで課題の差分更新を行う
+   */
+  private async updateIssuesInBackground(
+    cacheKey: string,
+    lastSyncTime: string,
+    cachedIssues: LocalIssue[]
+  ): Promise<void> {
+    try {
+      const updatedIssues = await this.fetchUpdatedIssues(lastSyncTime);
+      if (updatedIssues.length > 0) {
+        const updatedIds = new Set(updatedIssues.map((i) => i.id));
+        const filteredCache = cachedIssues.filter((i) => !updatedIds.has(i.id));
+        const newIssues = [
+          ...filteredCache,
+          ...updatedIssues.map((i) => this.createSearchIndex(i)),
+        ];
+        this.cacheService.set(cacheKey, newIssues, new Date().toISOString());
+        this.lastSyncTime = new Date().toISOString();
+      }
+    } catch (error) {
+      console.error("Background update failed:", error);
     }
   }
 
@@ -283,24 +289,82 @@ export class LinearService {
   }
 
   public async getIssueDetails(issueId: string) {
+    const cacheKey = `issue:${issueId}`;
+    const cached = this.cacheService.get<Issue>(cacheKey);
+
+    if (cached) {
+      // バックグラウンドで非同期更新
+      this.fetchIssueDetailsInBackground(issueId, cacheKey);
+      return cached;
+    }
+
     try {
       const issue = await this.client.issue(issueId);
+      this.cacheService.set(cacheKey, issue);
       return issue;
     } catch (error) {
       throw new Error(`Failed to fetch issue details: ${error}`);
     }
   }
 
+  /**
+   * バックグラウンドで課題詳細を更新する
+   */
+  private async fetchIssueDetailsInBackground(
+    issueId: string,
+    cacheKey: string
+  ): Promise<void> {
+    try {
+      const issue = await this.client.issue(issueId);
+      this.cacheService.set(cacheKey, issue);
+    } catch (error) {
+      console.error(`Background fetch failed for issue ${issueId}:`, error);
+    }
+  }
+
   public async getIssueComments(issueId: string) {
+    const cacheKey = `comments:${issueId}`;
+    const cached = this.cacheService.get<any[]>(cacheKey);
+
+    if (cached) {
+      // バックグラウンドで更新
+      this.fetchCommentsInBackground(issueId, cacheKey);
+      return cached;
+    }
+
     try {
       const comments = await this.client.comments({
         filter: {
           issue: { id: { eq: issueId } },
         },
       });
-      return comments.nodes;
+      const result = comments.nodes;
+      this.cacheService.set(cacheKey, result);
+      return result;
     } catch (error) {
       throw new Error(`Failed to fetch comments: ${error}`);
+    }
+  }
+
+  /**
+   * バックグラウンドでコメントを更新する
+   */
+  private async fetchCommentsInBackground(
+    issueId: string,
+    cacheKey: string
+  ): Promise<void> {
+    try {
+      const comments = await this.client.comments({
+        filter: {
+          issue: { id: { eq: issueId } },
+        },
+      });
+      this.cacheService.set(cacheKey, comments.nodes);
+    } catch (error) {
+      console.error(
+        `Background fetch failed for comments of issue ${issueId}:`,
+        error
+      );
     }
   }
 
@@ -310,15 +374,26 @@ export class LinearService {
         issueId,
         body: content,
       });
+      // コメント追加後にキャッシュを無効化
+      this.cacheService.delete(`comments:${issueId}`);
     } catch (error) {
       throw new Error(`Failed to add comment: ${error}`);
     }
   }
 
   public async getTeams(): Promise<Team[]> {
+    const cacheKey = "teams";
+    const cached = this.cacheService.get<Team[]>(cacheKey);
+
+    if (cached) {
+      return cached;
+    }
+
     try {
       const teams = await this.client.teams();
-      return teams.nodes;
+      const result = teams.nodes;
+      this.cacheService.set(cacheKey, result);
+      return result;
     } catch (error) {
       console.error("Failed to fetch teams:", error);
       throw error;
@@ -340,6 +415,8 @@ export class LinearService {
         stateId: input.stateId,
         assigneeId: input.assigneeId,
       });
+      // 課題作成後にキャッシュを無効化
+      this.cacheService.invalidateByPrefix("issues:");
       return result;
     } catch (error) {
       console.error("Failed to create issue:", error);
@@ -363,6 +440,9 @@ export class LinearService {
         assigneeId: input.assigneeId,
         stateId: input.stateId,
       });
+      // 課題更新後にキャッシュを無効化
+      this.cacheService.delete(`issue:${issueId}`);
+      this.cacheService.invalidateByPrefix("issues:");
       return result;
     } catch (error) {
       console.error("Failed to update issue:", error);
@@ -371,13 +451,22 @@ export class LinearService {
   }
 
   public async getWorkflowStates(teamId: string): Promise<WorkflowState[]> {
+    const cacheKey = `workflowStates:${teamId}`;
+    const cached = this.cacheService.get<WorkflowState[]>(cacheKey);
+
+    if (cached) {
+      return cached;
+    }
+
     try {
       const states = await this.client.workflowStates({
         filter: {
           team: { id: { eq: teamId } },
         },
       });
-      return states.nodes;
+      const result = states.nodes;
+      this.cacheService.set(cacheKey, result);
+      return result;
     } catch (error) {
       console.error("Failed to fetch workflow states:", error);
       throw error;
@@ -392,6 +481,9 @@ export class LinearService {
       const result = await this.client.updateIssue(issueId, {
         stateId: stateId,
       });
+      // 状態変更後にキャッシュを無効化
+      this.cacheService.delete(`issue:${issueId}`);
+      this.cacheService.invalidateByPrefix("issues:");
       return result;
     } catch (error) {
       console.error("Failed to update issue state:", error);
@@ -400,11 +492,20 @@ export class LinearService {
   }
 
   public async getProject(projectId: string): Promise<Project | null> {
+    const cacheKey = `project:${projectId}`;
+    const cached = this.cacheService.get<Project | null>(cacheKey);
+
+    if (cached !== null) {
+      return cached;
+    }
+
     try {
       const project = await this.client.project(projectId);
+      this.cacheService.set(cacheKey, project);
       return project;
     } catch (error) {
       if (error instanceof LinearError && error.message.includes("not found")) {
+        this.cacheService.set(cacheKey, null);
         return null;
       }
       console.error("Failed to fetch project:", error);
@@ -413,9 +514,18 @@ export class LinearService {
   }
 
   public async getProjects(): Promise<Project[]> {
+    const cacheKey = "projects";
+    const cached = this.cacheService.get<Project[]>(cacheKey);
+
+    if (cached) {
+      return cached;
+    }
+
     try {
       const projects = await this.client.projects();
-      return projects.nodes;
+      const result = projects.nodes;
+      this.cacheService.set(cacheKey, result);
+      return result;
     } catch (error) {
       console.error("Failed to fetch projects:", error);
       throw error;
@@ -424,15 +534,26 @@ export class LinearService {
 
   public updateApiToken(apiToken: string) {
     this.initializeClient(apiToken);
+    this.clearCache();
   }
 
   public async getLabels(): Promise<{ id: string; name: string }[]> {
+    const cacheKey = "labels";
+    const cached =
+      this.cacheService.get<{ id: string; name: string }[]>(cacheKey);
+
+    if (cached) {
+      return cached;
+    }
+
     try {
       const labels = await this.client.issueLabels();
-      return labels.nodes.map((label) => ({
+      const result = labels.nodes.map((label) => ({
         id: label.id,
         name: label.name,
       }));
+      this.cacheService.set(cacheKey, result);
+      return result;
     } catch (error) {
       console.error("Failed to fetch labels:", error);
       throw error;
@@ -442,13 +563,23 @@ export class LinearService {
   public async getTeamMembers(
     teamId: string
   ): Promise<{ id: string; name: string }[]> {
+    const cacheKey = `teamMembers:${teamId}`;
+    const cached =
+      this.cacheService.get<{ id: string; name: string }[]>(cacheKey);
+
+    if (cached) {
+      return cached;
+    }
+
     try {
       const team = await this.client.team(teamId);
       const members = await team.members();
-      return members.nodes.map((member) => ({
+      const result = members.nodes.map((member) => ({
         id: member.id,
         name: member.name,
       }));
+      this.cacheService.set(cacheKey, result);
+      return result;
     } catch (error) {
       console.error("Failed to fetch team members:", error);
       throw error;
@@ -456,16 +587,14 @@ export class LinearService {
   }
 
   public clearCache(): void {
-    this.cache = {};
+    this.cacheService.clear();
   }
 
   public async invalidateCache(key?: string): Promise<void> {
     if (key) {
-      Object.keys(this.cache)
-        .filter((k) => k.startsWith(key))
-        .forEach((k) => delete this.cache[k]);
+      this.cacheService.invalidateByPrefix(key);
     } else {
-      this.clearCache();
+      this.cacheService.clear();
     }
   }
 }
