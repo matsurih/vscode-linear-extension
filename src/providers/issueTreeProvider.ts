@@ -163,8 +163,14 @@ export class IssueTreeProvider
     pageInfo: (current: number, total: number) => `Page ${current} of ${total}`,
   };
 
-  constructor(private _linearService: LinearService) {
+  private readonly extensionUri: vscode.Uri;
+
+  constructor(
+    private _linearService: LinearService,
+    context: vscode.ExtensionContext
+  ) {
     this.groupBy = "status"; // デフォルトのグルーピングをstatusに設定
+    this.extensionUri = context.extensionUri;
   }
 
   // 展開状態の切り替え
@@ -615,7 +621,7 @@ export class IssueTreeProvider
   private getItemIcon(
     stateColor?: string,
     priority?: number
-  ): vscode.ThemeIcon {
+  ): vscode.ThemeIcon | { light: vscode.Uri; dark: vscode.Uri } {
     if (stateColor) {
       return new vscode.ThemeIcon(
         "issue-opened",
@@ -624,27 +630,68 @@ export class IssueTreeProvider
     }
 
     if (priority && priority > 0) {
-      return new vscode.ThemeIcon(this.getPriorityIcon(priority));
+      switch (priority) {
+        case 0:
+          return new vscode.ThemeIcon("dash");
+        case 1:
+          return {
+            light: vscode.Uri.joinPath(
+              this.extensionUri,
+              "resources",
+              "icons",
+              "light",
+              "priority-1.svg"
+            ),
+            dark: vscode.Uri.joinPath(
+              this.extensionUri,
+              "resources",
+              "icons",
+              "dark",
+              "priority-1.svg"
+            ),
+          };
+        case 2:
+          return {
+            light: vscode.Uri.joinPath(
+              this.extensionUri,
+              "resources",
+              "icons",
+              "light",
+              "priority-2.svg"
+            ),
+            dark: vscode.Uri.joinPath(
+              this.extensionUri,
+              "resources",
+              "icons",
+              "dark",
+              "priority-2.svg"
+            ),
+          };
+        case 3:
+          return {
+            light: vscode.Uri.joinPath(
+              this.extensionUri,
+              "resources",
+              "icons",
+              "light",
+              "priority-3.svg"
+            ),
+            dark: vscode.Uri.joinPath(
+              this.extensionUri,
+              "resources",
+              "icons",
+              "dark",
+              "priority-3.svg"
+            ),
+          };
+        case 4:
+          return new vscode.ThemeIcon("warning");
+        default:
+          return new vscode.ThemeIcon("issue-opened");
+      }
     }
 
     return new vscode.ThemeIcon("issue-opened");
-  }
-
-  private getPriorityIcon(priority: number): string {
-    switch (priority) {
-      case 0:
-        return "dash";
-      case 1:
-        return "arrow-down";
-      case 2:
-        return "arrow-right";
-      case 3:
-        return "arrow-up";
-      case 4:
-        return "warning";
-      default:
-        return "issue-opened";
-    }
   }
 
   private getStateThemeColor(color: string): vscode.ThemeColor {

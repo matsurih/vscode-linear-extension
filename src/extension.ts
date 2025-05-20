@@ -23,7 +23,7 @@ export async function activate(context: vscode.ExtensionContext) {
   const cacheService = new CacheService(context);
 
   const linearService = new LinearService(apiToken, cacheService);
-  const issueTreeProvider = new IssueTreeProvider(linearService);
+  const issueTreeProvider = new IssueTreeProvider(linearService, context);
   const issueDetailProvider = new IssueDetailViewProvider(
     context.extensionUri,
     linearService

@@ -161,10 +161,10 @@
         // 新しいリンクを作成
         const linkEl = document.createElement('a');
         linkEl.id = 'issue-linear-link';
-        linkEl.href = issue.url;
         linkEl.className = 'issue-link';
         linkEl.textContent = 'Linearで開く';
         linkEl.title = 'Linearでこのイシューを開く';
+        linkEl.style.cursor = 'pointer';
 
         // リンククリック時の処理
         linkEl.addEventListener('click', function (e) {
