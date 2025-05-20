@@ -44,6 +44,7 @@ export class LinearService {
   private readonly RETRY_DELAY = 1000;
   private cacheService: CacheService;
   private lastSyncTime?: string;
+  private organizationSlug?: string;
 
   constructor(apiKey: string, cacheService: CacheService) {
     this.initializeClient(apiKey);
@@ -445,6 +446,64 @@ export class LinearService {
   }
 
   /**
+   * 組織のスラッグを取得する
+   * APIで取得した組織情報をキャッシュする
+   */
+  public async getOrganizationSlug(): Promise<string> {
+    // キャッシュされた値があればそれを返す
+    if (this.organizationSlug) {
+      return this.organizationSlug;
+    }
+
+    const cacheKey = "organization:slug";
+    const cached = this.cacheService.get<string>(cacheKey);
+
+    if (cached) {
+      this.organizationSlug = cached;
+      return cached;
+    }
+
+    try {
+      // APIから組織情報を取得
+      const organization = await this.client.organization;
+      const orgName = organization.name;
+      // nameをURL用のslugとして使用（小文字に変換し、スペースをハイフンに置き換え）
+      const slug = orgName ? orgName.toLowerCase().replace(/\s+/g, "-") : null;
+
+      if (!slug) {
+        throw new Error("組織情報のスラッグが取得できませんでした");
+      }
+
+      // キャッシュと内部変数に保存
+      this.cacheService.set(cacheKey, slug);
+      this.organizationSlug = slug;
+      return slug;
+    } catch (error) {
+      console.error("組織情報の取得に失敗:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * イシューのWeb URLを生成する
+   * @param issueId イシューID
+   * @param identifier イシュー識別子（例：PROJ-123）
+   */
+  public async getIssueUrl(
+    issueId: string,
+    identifier: string
+  ): Promise<string> {
+    try {
+      const slug = await this.getOrganizationSlug();
+      return `https://linear.app/${slug}/issue/${identifier}`;
+    } catch (error) {
+      console.error(`イシューURL生成失敗 (${issueId}):`, error);
+      // フォールバックURLを返す（可能な限り動作するように）
+      return `https://linear.app/issue/${identifier}`;
+    }
+  }
+
+  /**
    * Issue詳細を取得する
    * キャッシュがある場合はそれを返し、バックグラウンドで更新する
    * @param issueId IssueのID
@@ -479,6 +538,16 @@ export class LinearService {
         console.warn(`Issue ${issueId} has no state information in cache`);
       }
 
+      // URLプロパティを追加（存在しない場合のみ）
+      if (!cached.url && cached.identifier) {
+        try {
+          const url = await this.getIssueUrl(issueId, cached.identifier);
+          (cached as any).url = url;
+        } catch (error) {
+          console.warn(`イシューURL生成失敗 (${issueId}):`, error);
+        }
+      }
+
       // バックグラウンドで最新データを取得
       setTimeout(() => {
         this.fetchIssueDetailsInBackground(issueId, cacheKey).catch((err) =>
@@ -511,6 +580,16 @@ export class LinearService {
             `Failed to preload state for issue ${issueId}:`,
             stateError
           );
+        }
+
+        // URLプロパティを追加
+        if (issue.identifier) {
+          try {
+            const url = await this.getIssueUrl(issueId, issue.identifier);
+            (issue as any).url = url;
+          } catch (error) {
+            console.warn(`イシューURL生成失敗 (${issueId}):`, error);
+          }
         }
 
         // キャッシュに保存
@@ -554,6 +633,19 @@ export class LinearService {
           `Background: Failed to preload state for issue ${issue.identifier}:`,
           stateError
         );
+      }
+
+      // URLプロパティを追加
+      if (issue.identifier) {
+        try {
+          const url = await this.getIssueUrl(issueId, issue.identifier);
+          (issue as any).url = url;
+        } catch (error) {
+          console.warn(
+            `バックグラウンド: イシューURL生成失敗 (${issueId}):`,
+            error
+          );
+        }
       }
 
       this.cacheService.set(cacheKey, issue);

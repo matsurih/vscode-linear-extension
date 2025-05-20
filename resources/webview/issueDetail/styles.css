@@ -85,10 +85,29 @@ body {
   margin-right: 10px;
 }
 
+.issue-link {
+  color: var(--link-color);
+  text-decoration: none;
+  font-size: 0.9em;
+  margin-left: 10px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background-color: var(--button-background);
+  color: var(--button-foreground);
+}
+
+.issue-link:hover {
+  background-color: var(--button-hover-background);
+  text-decoration: none;
+}
+
 .issue-title {
   font-size: 1.2em;
   font-weight: bold;
   margin-bottom: 5px;
+  display: block;
+  margin-top: 10px;
+  clear: both;
 }
 
 .issue-metadata {

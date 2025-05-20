@@ -149,6 +149,39 @@
 
       // 基本情報の表示
       issueIdEl.textContent = issue.identifier || '';
+
+      // Linearへのリンクを追加
+      if (issue.url) {
+        // 既存のリンクがあれば削除
+        const existingLink = document.getElementById('issue-linear-link');
+        if (existingLink) {
+          existingLink.remove();
+        }
+
+        // 新しいリンクを作成
+        const linkEl = document.createElement('a');
+        linkEl.id = 'issue-linear-link';
+        linkEl.href = issue.url;
+        linkEl.className = 'issue-link';
+        linkEl.textContent = 'Linearで開く';
+        linkEl.title = 'Linearでこのイシューを開く';
+
+        // リンククリック時の処理
+        linkEl.addEventListener('click', function (e) {
+          e.preventDefault();
+          vscode.postMessage({
+            type: 'openLink',
+            url: issue.url
+          });
+        });
+
+        // リンクをイシューIDの後に挿入
+        issueIdEl.parentNode.insertBefore(linkEl, issueIdEl.nextSibling);
+      }
+
+      // タイトルを別の行に表示
+      issueTitleEl.style.display = 'block';
+      issueTitleEl.style.marginTop = '10px';
       issueTitleEl.textContent = issue.title || '';
 
       // 状態の表示
