@@ -124,22 +124,20 @@ export class IssueDetailViewProvider implements vscode.WebviewViewProvider {
         }
         break;
 
+      case "openLink":
+        try {
+          // URLを開く
+          console.log(`外部リンクを開きます: ${message.url}`);
+          await vscode.env.openExternal(vscode.Uri.parse(message.url));
+        } catch (error) {
+          console.error("リンクを開く際にエラー:", error);
+        }
+        break;
+
       case "debug":
         console.log("デバッグ情報:", message.data);
         break;
     }
-  }
-
-  /**
-   * 診断情報をWebViewに送信（非表示、デバッグ用に内部保持のみ）
-   */
-  private _postDiagnostics() {
-    // デバッグ情報は内部的に記録するのみ
-    this._diagnostics.pendingUpdates;
-    this._diagnostics.successfulUpdates;
-    this._diagnostics.lastError;
-    this._diagnostics.initAttempts;
-    // WebViewへの送信は行わない
   }
 
   /**

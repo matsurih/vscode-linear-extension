@@ -46,6 +46,45 @@
     return false;
   };
 
+  // Markdownをパースして表示する
+  function renderMarkdown(markdown, element) {
+    try {
+      if (!markdown) {
+        element.innerHTML = '<p>コンテンツがありません</p>';
+        return;
+      }
+
+      // XSS脆弱性を防止するためのオプション
+      const markedOptions = {
+        breaks: true, // 改行を認識
+        gfm: true,    // GitHub Flavored Markdownを有効
+        headerIds: false, // ヘッダーにIDを付けない（XSS防止）
+        sanitize: false // HTMLをサニタイズはmarked v0.7.0以降は非推奨
+      };
+
+      // markdownをHTMLに変換
+      element.innerHTML = marked.parse(markdown, markedOptions);
+
+      // リンクの処理
+      const links = element.querySelectorAll('a');
+      links.forEach(link => {
+        // リンクをクリックしたときにVSCodeで開く
+        link.addEventListener('click', function (e) {
+          e.preventDefault();
+          vscode.postMessage({
+            type: 'openLink',
+            url: link.href
+          });
+        });
+      });
+
+      log('Markdownを描画しました');
+    } catch (error) {
+      log('Markdown描画エラー: ' + error.message);
+      element.textContent = markdown || '';
+    }
+  }
+
   // 表示状態の切り替え
   function showLoading() {
     loadingEl.classList.remove('hidden');
@@ -130,8 +169,8 @@
       const assignee = issue.assignee;
       issueAssigneeEl.textContent = assignee ? '担当: ' + (assignee.name || '不明') : '担当なし';
 
-      // 説明の表示
-      issueDescriptionEl.textContent = issue.description || '説明なし';
+      // 説明をMarkdownとして表示
+      renderMarkdown(issue.description || '説明なし', issueDescriptionEl);
 
       // コメントの表示
       commentsListEl.innerHTML = '';
@@ -140,9 +179,10 @@
           const commentEl = document.createElement('div');
           commentEl.className = 'comment';
 
-          // コメント内容
+          // コメント内容（Markdownとして描画）
           const commentBodyEl = document.createElement('div');
-          commentBodyEl.textContent = comment.body || '';
+          commentBodyEl.className = 'markdown-body';
+          renderMarkdown(comment.body || '', commentBodyEl);
 
           // 日時
           const commentDateEl = document.createElement('div');

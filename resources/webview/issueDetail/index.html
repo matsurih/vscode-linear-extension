@@ -5,9 +5,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy"
-    content="default-src 'none'; style-src {{cspSource}}; script-src {{cspSource}};">
+    content="default-src 'none'; style-src {{cspSource}}; script-src {{cspSource}} https://cdn.jsdelivr.net/npm/marked/marked.min.js; connect-src https://cdn.jsdelivr.net;">
   <title>Linear Issue Detail</title>
   <link rel="stylesheet" href="{{stylesUri}}">
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 
 <body>
@@ -41,7 +42,7 @@
       </div>
     </div>
 
-    <div id="issue-description" class="issue-description"></div>
+    <div id="issue-description" class="issue-description markdown-body"></div>
 
     <div class="comments-container">
       <div class="comments-header">コメント</div>
