@@ -8,6 +8,7 @@ import {
   LinearError,
 } from "@linear/sdk";
 import { CacheService } from "./cache/cacheService";
+
 interface LocalIssue extends Issue {
   _searchText?: string;
 }
@@ -20,6 +21,21 @@ export interface SearchCriteria {
   createdAfter?: Date;
   updatedAfter?: Date;
   updatedBefore?: Date;
+}
+
+export interface FilterCriteria {
+  assignedToMe?: boolean; // この変数は内部的には使用しないが、型の互換性のために残す
+  status?: string[];
+  priority?: number[];
+  project?: string[];
+  includeCompleted?: boolean;
+  query?: string;
+  labels?: string[];
+  dueDate?: {
+    before?: Date;
+    after?: Date;
+  };
+  updatedAfter?: Date;
 }
 
 export class LinearService {
@@ -83,51 +99,48 @@ export class LinearService {
     return localIssue;
   }
 
-  private async fetchUpdatedIssues(since?: string): Promise<Issue[]> {
-    try {
-      const filter: any = {};
-      if (since) {
-        filter.updatedAt = { gt: since };
-      }
-
-      const issues = await this.client.issues({
-        filter,
-        first: 100,
-      });
-
-      return issues.nodes;
-    } catch (error) {
-      console.error("Failed to fetch updated issues:", error);
-      return [];
-    }
-  }
-
   /**
    * 課題一覧を取得する
    * キャッシュがある場合は差分更新を行い、なければ全件取得する
+   * 常に自分にアサインされたIssueのみを取得し、完了・キャンセル状態は除外
+   * @param includeCompleted 完了状態のIssueも含める場合はtrue
+   * @param additionalFilters その他のフィルター条件
    */
   public async getIssues(
-    filterMine: boolean = false,
-    includeCompleted: boolean = false
+    includeCompleted: boolean = false,
+    additionalFilters: FilterCriteria = {}
   ) {
-    const cacheKey = `issues:${filterMine}:${includeCompleted}`;
+    // フィルター条件をキャッシュキーの一部に含める
+    const filterKey = JSON.stringify({
+      completed: includeCompleted,
+      ...additionalFilters,
+    });
+    const cacheKey = `issues:${filterKey}`;
     console.log("Attempting to get issues from cache:", cacheKey);
     const cached = this.cacheService.get<LocalIssue[]>(cacheKey);
 
-    if (cached) {
+    // キャッシュデータの有効性をチェック
+    const isValidCache = cached && Array.isArray(cached) && cached.length > 0;
+    if (isValidCache) {
       console.log("Cache hit! Found", cached.length, "issues in cache");
-      // バックグラウンドで非同期更新
-      if (this.lastSyncTime) {
-        // setTimeoutを使って非同期処理を確実に後回しにする
-        setTimeout(() => {
-          this.updateIssuesInBackground(
-            cacheKey,
-            this.lastSyncTime || new Date().toISOString(),
-            cached
-          ).catch((err) => console.error("Background update failed:", err));
-        }, 100);
-      }
-      return this.filterIssues(cached, filterMine, includeCompleted);
+
+      // バックグラウンドでAPIデータを非同期更新
+      const existingInfo = this.cacheService.getLastUpdateId(cacheKey);
+      const lastSyncTime =
+        existingInfo || this.lastSyncTime || new Date().toISOString();
+
+      // 非同期で更新
+      setTimeout(() => {
+        this.updateIssuesInBackground(
+          cacheKey,
+          lastSyncTime,
+          cached,
+          includeCompleted,
+          additionalFilters
+        ).catch((err) => console.error("Background update failed:", err));
+      }, 100);
+
+      return cached;
     }
 
     console.log("Cache miss, fetching from API");
@@ -135,96 +148,239 @@ export class LinearService {
       // 初回またはキャッシュ無効時の全件取得
       const result = await this.withRetry(async () => {
         const filter: any = {};
-        if (filterMine) {
-          const me = await this.client.viewer;
-          filter.assignee = { id: { eq: me.id } };
-        }
+
+        // 常に自分のIssueのみを取得
+        const me = await this.client.viewer;
+        filter.assignee = { id: { eq: me.id } };
+
+        // 完了・キャンセル状態の除外設定
         if (!includeCompleted) {
-          filter.state = { type: { neq: "completed" } };
+          // TypeをArrayで指定して複数条件で除外
+          filter.state = {
+            type: {
+              nin: ["completed", "canceled"],
+            },
+          };
         }
+
+        // 追加フィルターの適用
+        if (additionalFilters.status?.length) {
+          // 既存のstate条件がある場合は維持しつつ、IDの条件を追加
+          filter.state = {
+            ...filter.state,
+            id: { in: additionalFilters.status },
+          };
+        }
+
+        if (additionalFilters.priority?.length) {
+          filter.priority = { in: additionalFilters.priority };
+        }
+
+        if (additionalFilters.project?.length) {
+          filter.project = { id: { in: additionalFilters.project } };
+        }
+
+        if (additionalFilters.labels?.length) {
+          filter.labels = {
+            some: {
+              id: { in: additionalFilters.labels },
+            },
+          };
+        }
+
+        if (additionalFilters.updatedAfter) {
+          filter.updatedAt = {
+            gt: additionalFilters.updatedAfter.toISOString(),
+          };
+        }
+
+        // クエリによる検索
+        if (additionalFilters.query) {
+          filter.or = [
+            { title: { contains: additionalFilters.query } },
+            { description: { contains: additionalFilters.query } },
+          ];
+        }
+
+        console.log("Applying filter:", JSON.stringify(filter));
+
+        // LinearのAPIクエリ
+        // 重要: issue.state などの呼び出しで個別APIリクエストが発生しないよう関連データを一度に取得
         const issues = await this.client.issues({
           filter,
           first: 100,
-        });
-        console.log(`Fetched ${issues.nodes.length} issues from API`);
-        return issues.nodes.map((i) => this.createSearchIndex(i));
+          // includeパラメータを使用して関連データを一括取得
+          include: ["state", "assignee", "project", "team", "labels"],
+        } as any);
+
+        console.log(
+          `Fetched ${issues.nodes.length} issues from API with related data`
+        );
+
+        // 取得したデータに関連情報が正しく含まれているか確認
+        const sampleIssue = issues.nodes[0];
+        if (sampleIssue) {
+          this.logSampleIssueData(sampleIssue);
+        }
+
+        // 検索用のインデックスを生成してキャッシュに保存
+        const localIssues = issues.nodes.map((issue) =>
+          this.createSearchIndex(issue)
+        );
+        this.cacheService.set(cacheKey, localIssues, new Date().toISOString());
+        this.lastSyncTime = new Date().toISOString();
+        return localIssues;
       });
 
-      this.cacheService.set(cacheKey, result, new Date().toISOString());
-      this.lastSyncTime = new Date().toISOString();
       return result;
     } catch (error) {
-      console.error("Error fetching issues:", error);
-      if (cached) {
-        console.log("Using stale cache due to fetch error");
-        return this.filterIssues(cached, filterMine, includeCompleted);
+      console.error("Failed to fetch issues:", error);
+      // キャッシュが無ければエラーを投げる、あれば古いデータを返す
+      if (!isValidCache) {
+        throw new Error(`Failed to fetch issues: ${error}`);
       }
-      throw new Error(`Failed to fetch issues: ${error}`);
+      return cached!;
+    }
+  }
+
+  // サンプルイシューのデータをログに出力して確認用
+  private logSampleIssueData(issue: Issue) {
+    try {
+      console.log("Sample issue data validation:");
+
+      // 安全に値を取り出す関数
+      const safeExtract = (
+        obj: any,
+        path: string,
+        defaultValue: any = "not available"
+      ) => {
+        try {
+          const paths = path.split(".");
+          let current = obj;
+          for (const key of paths) {
+            if (current === null || current === undefined) return defaultValue;
+            current = current[key];
+          }
+          if (typeof current === "object" && current !== null) {
+            return JSON.stringify(current).substring(0, 50) + "...";
+          }
+          return current || defaultValue;
+        } catch (e) {
+          return defaultValue;
+        }
+      };
+
+      console.log(`Issue ID: ${issue.id}`);
+      console.log(`Title: ${issue.title}`);
+      console.log(`Identifier: ${issue.identifier}`);
+      console.log(`State: ${safeExtract(issue, "state.name")}`);
+      console.log(`State type: ${safeExtract(issue, "state.type")}`);
+      console.log(`Assignee: ${safeExtract(issue, "assignee.name")}`);
+      console.log(`Team: ${safeExtract(issue, "team.name")}`);
+      console.log(`Project: ${safeExtract(issue, "project.name")}`);
+
+      if (issue.state === undefined) {
+        console.warn(`Issue ${issue.identifier} has no state information!`);
+      }
+    } catch (e) {
+      console.error("Error logging sample issue data:", e);
     }
   }
 
   /**
    * バックグラウンドで課題の差分更新を行う
+   * 自分にアサインされたIssueのみを取得し、オプションで完了状態を含める
    */
   private async updateIssuesInBackground(
     cacheKey: string,
     lastSyncTime: string,
-    cachedIssues: LocalIssue[]
+    cachedIssues: LocalIssue[],
+    includeCompleted: boolean = false,
+    additionalFilters: FilterCriteria = {}
   ): Promise<void> {
     try {
-      const updatedIssues = await this.fetchUpdatedIssues(lastSyncTime);
+      console.log(`Background update started for ${cacheKey}`);
+      // 更新時にも同じフィルター条件を適用
+      const filter: any = {
+        updatedAt: { gt: lastSyncTime },
+      };
+
+      // 常に自分のIssueのみを取得
+      const me = await this.client.viewer;
+      filter.assignee = { id: { eq: me.id } };
+
+      // 完了・キャンセル状態の除外設定
+      if (!includeCompleted) {
+        // TypeをArrayで指定して複数条件で除外
+        filter.state = {
+          type: {
+            nin: ["completed", "canceled"],
+          },
+        };
+      }
+
+      // 追加フィルターの適用
+      if (additionalFilters.status?.length) {
+        filter.state = {
+          ...filter.state,
+          id: { in: additionalFilters.status },
+        };
+      }
+
+      if (additionalFilters.priority?.length) {
+        filter.priority = { in: additionalFilters.priority };
+      }
+
+      if (additionalFilters.project?.length) {
+        filter.project = { id: { in: additionalFilters.project } };
+      }
+
+      // 差分更新用のAPIコール
+      const issues = await this.client.issues({
+        filter,
+        first: 100,
+        // 関連データを一度に取得
+        include: ["state", "assignee", "project", "team"],
+      } as any);
+
+      const updatedIssues = issues.nodes;
+      console.log(
+        `Found ${updatedIssues.length} updated issues since ${lastSyncTime}`
+      );
+
       if (updatedIssues.length > 0) {
+        // 更新されたイシューのIDを記録
         const updatedIds = new Set(updatedIssues.map((i) => i.id));
+
+        // 更新されていないイシューはそのまま保持
         const filteredCache = cachedIssues.filter((i) => !updatedIds.has(i.id));
-        const newIssues = [
-          ...filteredCache,
-          ...updatedIssues.map((i) => this.createSearchIndex(i)),
-        ];
+
+        // 新しいイシューリストを作成（関連データはすでに含まれている）
+        const processedIssues = updatedIssues.map((issue) => {
+          console.log(`Processing updated issue ${issue.identifier}`);
+          return this.createSearchIndex(issue);
+        });
+
+        const newIssues = [...filteredCache, ...processedIssues];
+
+        // キャッシュを更新
         this.cacheService.set(cacheKey, newIssues, new Date().toISOString());
         this.lastSyncTime = new Date().toISOString();
+        console.log(
+          `Updated cache for ${cacheKey} with ${newIssues.length} issues`
+        );
+      } else {
+        console.log(`No updates needed for ${cacheKey}`);
       }
     } catch (error) {
       console.error("Background update failed:", error);
     }
   }
 
-  private async filterIssues(
-    issues: LocalIssue[],
-    filterMine: boolean,
-    includeCompleted: boolean
-  ): Promise<LocalIssue[]> {
-    try {
-      if (filterMine) {
-        const me = await this.client.viewer;
-        return issues.filter((issue) => {
-          if (
-            !issue.assignee ||
-            (issue.assignee as any).id !== (me as any).id
-          ) {
-            return false;
-          }
-          if (!includeCompleted && (issue.state as any)?.type === "completed") {
-            return false;
-          }
-          return true;
-        });
-      }
-      return issues.filter((issue) => {
-        if (!includeCompleted && (issue.state as any)?.type === "completed") {
-          return false;
-        }
-        return true;
-      });
-    } catch (error) {
-      console.error("Failed to filter issues:", error);
-      return issues;
-    }
-  }
-
   public async searchIssues(criteria: SearchCriteria): Promise<Issue[]> {
     try {
       // キャッシュからすべてのissueを取得
-      const allIssues = await this.getIssues(false, true);
+      const allIssues = await this.getIssues(false);
 
       return allIssues.filter((issue) => {
         // クライアントサイドでのフィルタリング
@@ -288,22 +444,85 @@ export class LinearService {
     }
   }
 
+  /**
+   * Issue詳細を取得する
+   * キャッシュがある場合はそれを返し、バックグラウンドで更新する
+   * @param issueId IssueのID
+   */
   public async getIssueDetails(issueId: string) {
-    const cacheKey = `issue:${issueId}`;
+    // 改善: キャッシュキーをissueIdベースに変更
+    const cacheKey = `issueDetail:${issueId}`;
+    console.log(`Attempting to get issue details from cache: ${cacheKey}`);
+
+    // キャッシュ確認
     const cached = this.cacheService.get<Issue>(cacheKey);
 
     if (cached) {
-      // バックグラウンドで非同期更新
-      this.fetchIssueDetailsInBackground(issueId, cacheKey);
+      console.log(`Cache hit for issue details: ${issueId}`);
+
+      // 必須情報が存在するか確認
+      if (cached.state) {
+        console.log(`Issue ${issueId} has state information in cache`);
+        // @ts-ignore - stateはオブジェクトかPromiseになりうる
+        const stateName = cached.state.name || "unknown";
+        if (!stateName || stateName === "unknown") {
+          console.warn(
+            `Issue ${issueId} has no state name, might be an API issue`
+          );
+        }
+      } else {
+        console.warn(`Issue ${issueId} has no state information in cache`);
+      }
+
+      // バックグラウンドで最新データを取得
+      setTimeout(() => {
+        this.fetchIssueDetailsInBackground(issueId, cacheKey).catch((err) =>
+          console.error(`Background fetch failed for ${issueId}:`, err)
+        );
+      }, 100);
+
       return cached;
     }
 
+    console.log(`Cache miss for issue details: ${issueId}, fetching from API`);
     try {
-      const issue = await this.client.issue(issueId);
-      this.cacheService.set(cacheKey, issue);
-      return issue;
+      // APIから取得
+      return await this.withRetry(async () => {
+        // 注: LinearSDKのバージョンによって使用方法が異なる場合があります
+        const issue = await this.client.issue(issueId);
+
+        if (!issue) {
+          throw new Error(`Issue ${issueId} not found`);
+        }
+
+        // stateを明示的に事前ロード
+        try {
+          const state = await issue.state;
+          console.log(
+            `Preloaded state for issue ${issueId}: ${state?.name || "unknown"}`
+          );
+        } catch (stateError) {
+          console.warn(
+            `Failed to preload state for issue ${issueId}:`,
+            stateError
+          );
+        }
+
+        // キャッシュに保存
+        this.cacheService.set(cacheKey, issue);
+        return issue;
+      });
     } catch (error) {
-      throw new Error(`Failed to fetch issue details: ${error}`);
+      console.error(`Failed to fetch issue details for ${issueId}:`, error);
+
+      // キャッシュが完全に無い場合はエラーを投げる
+      if (!cached) {
+        throw error;
+      }
+
+      // キャッシュが古くても返す（ユーザー体験改善）
+      console.log(`Returning stale cache for ${issueId} due to API error`);
+      return cached;
     }
   }
 
@@ -316,6 +535,22 @@ export class LinearService {
   ): Promise<void> {
     try {
       const issue = await this.client.issue(issueId);
+
+      // 状態情報を明示的に事前ロード
+      try {
+        const state = await issue.state;
+        console.log(
+          `Background: Preloaded state for issue ${issue.identifier}: ${
+            state?.name || "unknown"
+          }`
+        );
+      } catch (stateError) {
+        console.warn(
+          `Background: Failed to preload state for issue ${issue.identifier}:`,
+          stateError
+        );
+      }
+
       this.cacheService.set(cacheKey, issue);
     } catch (error) {
       console.error(`Background fetch failed for issue ${issueId}:`, error);

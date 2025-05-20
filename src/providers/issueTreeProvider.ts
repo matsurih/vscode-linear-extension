@@ -248,10 +248,20 @@ export class IssueTreeProvider
 
     try {
       this.loadingMessage = "Fetching issues...";
+
+      // フィルター条件を渡して、API側でフィルタリングする
       const issues = await this._linearService.getIssues(
-        this.filterCriteria.assignedToMe || false,
-        this.filterCriteria.includeCompleted || false
+        this.filterCriteria.includeCompleted || false,
+        {
+          status: this.filterCriteria.status,
+          priority: this.filterCriteria.priority,
+          project: this.filterCriteria.project,
+          labels: this.filterCriteria.labels,
+          updatedAfter: this.filterCriteria.updatedAfter,
+          query: this.filterCriteria.query,
+        }
       );
+
       this.issueCache = issues;
       this.lastFetchTime = now;
 
@@ -267,33 +277,88 @@ export class IssueTreeProvider
 
   /**
    * イシュー表示情報のキャッシュを更新する
+   * 個別のAPIコールを避けるように最適化
    */
   private async updateIssueDisplayInfoCache(issues: Issue[]): Promise<void> {
+    console.log(`更新対象のイシュー件数: ${issues.length}`);
+
     for (const issue of issues) {
-      if (!this.issueDisplayInfoCache.has(issue.id)) {
-        // 必要な情報のみを抽出して軽量なオブジェクトとしてキャッシュ
-        const state = await issue.state;
-        const assignee = await issue.assignee;
-        const project = await issue.project;
+      try {
+        // すでにキャッシュされている情報を確認
+        const existingInfo = this.issueDisplayInfoCache.get(issue.id);
+
+        // キャッシュされたデータがあり、最近更新されたものは再利用する
+        if (
+          existingInfo &&
+          new Date(issue.updatedAt).getTime() <=
+            new Date(existingInfo.updatedAt).getTime()
+        ) {
+          console.log(`Using cached info for issue ${issue.identifier}`);
+          continue;
+        }
+
+        // issue情報から安全にデータを抽出する関数
+        const safeExtract = (
+          obj: any,
+          path: string,
+          defaultValue: any = undefined
+        ) => {
+          try {
+            return path
+              .split(".")
+              .reduce(
+                (o, key) => (o && o[key] !== undefined ? o[key] : defaultValue),
+                obj
+              );
+          } catch (e) {
+            return defaultValue;
+          }
+        };
+
+        // state、assignee、projectの情報を安全に抽出
+        const stateId = safeExtract(issue, "state.id");
+        const stateName = safeExtract(issue, "state.name");
+        const stateColor = safeExtract(issue, "state.color");
+        const stateType = safeExtract(issue, "state.type");
+
+        const assigneeId = safeExtract(issue, "assignee.id");
+        const assigneeName = safeExtract(issue, "assignee.name");
+
+        const projectId = safeExtract(issue, "project.id");
+        const projectName = safeExtract(issue, "project.name");
+
+        // デバッグログ
+        console.log(
+          `Processing issue ${issue.identifier}, state: ${
+            stateName || "unknown"
+          }`
+        );
 
         const displayInfo: IssueDisplayInfo = {
           id: issue.id,
           identifier: issue.identifier,
           title: issue.title,
-          stateId: state?.id,
-          stateName: state?.name,
-          stateColor: state ? (state as any).color : undefined,
-          stateType: state ? (state as any).type : undefined,
+          stateId: stateId,
+          stateName: stateName,
+          stateColor: stateColor,
+          stateType: stateType,
           priority: issue.priority,
-          assigneeId: assignee?.id,
-          assigneeName: assignee ? (assignee as any).name : undefined,
-          projectId: project?.id,
-          projectName: project ? (project as any).name : undefined,
+          assigneeId: assigneeId,
+          assigneeName: assigneeName,
+          projectId: projectId,
+          projectName: projectName,
           createdAt: issue.createdAt,
           updatedAt: issue.updatedAt,
         };
 
+        // ステート情報に問題がある場合のデバッグ
+        if (!stateName) {
+          console.warn(`Issue ${issue.identifier} has no state name`, issue);
+        }
+
         this.issueDisplayInfoCache.set(issue.id, displayInfo);
+      } catch (error) {
+        console.error(`Failed to cache issue ${issue.identifier} info:`, error);
       }
     }
   }
@@ -397,29 +462,8 @@ export class IssueTreeProvider
   }
 
   private async filterIssues(issues: Issue[]): Promise<Issue[]> {
-    return issues.filter(async (issue) => {
-      if (this.filterCriteria.status?.length) {
-        const state = await issue.state;
-        if (!state || !this.filterCriteria.status.includes(state.id)) {
-          return false;
-        }
-      }
-
-      if (this.filterCriteria.priority?.length) {
-        if (!this.filterCriteria.priority.includes(issue.priority)) {
-          return false;
-        }
-      }
-
-      if (this.filterCriteria.project?.length) {
-        const project = await issue.project;
-        if (!project || !this.filterCriteria.project.includes(project.id)) {
-          return false;
-        }
-      }
-
-      return true;
-    });
+    // API側でフィルタリング済みなので、そのまま返す
+    return issues;
   }
 
   async getTreeItem(
@@ -483,19 +527,38 @@ export class IssueTreeProvider
   }
 
   private async getIssueTreeItem(issue: Issue): Promise<vscode.TreeItem> {
-    const issueInfo = this.issueDisplayInfoCache.get(issue.id);
+    // デバッグログ
+    console.log(`Getting tree item for issue ${issue.identifier}`);
+
+    // ステータス情報の取得を強化
     let stateColor = undefined;
     let stateName = undefined;
 
-    if (issueInfo) {
-      // キャッシュから取得
-      stateColor = issueInfo.stateColor;
-      stateName = issueInfo.stateName;
-    } else {
-      // キャッシュがない場合は取得して更新
-      const state = await issue.state;
-      stateColor = state ? (state as any).color : undefined;
-      stateName = state?.name;
+    try {
+      // キャッシュから取得を試みる
+      const issueInfo = this.issueDisplayInfoCache.get(issue.id);
+
+      if (issueInfo) {
+        // キャッシュから取得
+        stateColor = issueInfo.stateColor;
+        stateName = issueInfo.stateName;
+        console.log(
+          `Issue ${issue.identifier} using cached state: ${stateName}`
+        );
+      } else {
+        // キャッシュがない場合は取得して更新
+        const state = await issue.state;
+        stateColor = state ? (state as any).color : undefined;
+        stateName = state?.name;
+        console.log(
+          `Issue ${issue.identifier} using fetched state: ${stateName}`
+        );
+      }
+    } catch (error) {
+      console.error(
+        `Error getting state for issue ${issue.identifier}:`,
+        error
+      );
     }
 
     const treeItem = new vscode.TreeItem(
@@ -518,6 +581,19 @@ export class IssueTreeProvider
     // ステータス表示
     if (stateName) {
       treeItem.description = stateName;
+    } else {
+      // ステータス名がない場合は取得を試みる
+      try {
+        const state = await issue.state;
+        if (state) {
+          treeItem.description = state.name;
+        }
+      } catch (error) {
+        console.error(
+          `Failed to get state name for ${issue.identifier}:`,
+          error
+        );
+      }
     }
 
     // アイコン設定
@@ -648,17 +724,37 @@ export class IssueTreeProvider
       for (const [, stateIssues] of statusGroups.entries()) {
         // サンプルイシューからステート情報を取得
         const sampleIssue = stateIssues[0];
-        const displayInfo = this.issueDisplayInfoCache.get(sampleIssue.id);
-        let stateName;
-        let stateColor;
 
-        if (displayInfo && displayInfo.stateName) {
-          stateName = displayInfo.stateName;
-          stateColor = displayInfo.stateColor;
-        } else {
-          const state = await sampleIssue.state;
-          stateName = state?.name || "Unknown";
-          stateColor = state ? (state as any).color : undefined;
+        // ステータス情報の取得を強化
+        let stateName = "Unknown";
+        let stateColor = undefined;
+
+        try {
+          // まずキャッシュから取得を試みる
+          const displayInfo = this.issueDisplayInfoCache.get(sampleIssue.id);
+
+          if (displayInfo && displayInfo.stateName) {
+            stateName = displayInfo.stateName;
+            stateColor = displayInfo.stateColor;
+            console.log(`Group using cached state: ${stateName}`);
+          } else {
+            // キャッシュになければAPIから取得
+            const state = await sampleIssue.state;
+            if (state) {
+              stateName = state.name || "Unknown";
+              stateColor = (state as any).color;
+              console.log(`Group using fetched state: ${stateName}`);
+            } else {
+              console.warn(
+                `No state found for issue ${sampleIssue.identifier}`
+              );
+            }
+          }
+        } catch (error) {
+          console.error(
+            `Error getting state for issue ${sampleIssue.identifier}:`,
+            error
+          );
         }
 
         result.push({

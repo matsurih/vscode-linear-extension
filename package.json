@@ -24,11 +24,6 @@
         "icon": "$(refresh)"
       },
       {
-        "command": "linear.filterMyIssues",
-        "title": "Show My Issues",
-        "icon": "$(person)"
-      },
-      {
         "command": "linear.showIssueDetail",
         "title": "Show Issue Detail",
         "icon": "$(info)"
@@ -193,11 +188,6 @@
           "group": "navigation@1"
         },
         {
-          "command": "linear.filterMyIssues",
-          "when": "view == linearIssues",
-          "group": "navigation@2"
-        },
-        {
           "command": "linear.searchIssues",
           "when": "view == linearIssues",
           "group": "navigation@3"
@@ -206,16 +196,6 @@
           "submenu": "linear.groupingMenu",
           "when": "view == linearIssues",
           "group": "2_organization@1"
-        },
-        {
-          "submenu": "linear.filterMenu",
-          "when": "view == linearIssues",
-          "group": "2_organization@2"
-        },
-        {
-          "submenu": "linear.filterManagementMenu",
-          "when": "view == linearIssues",
-          "group": "2_organization@3"
         },
         {
           "command": "linear.previousPage",

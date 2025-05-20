@@ -29,11 +29,43 @@ export class CacheService {
    */
   get<T>(key: string, ttl: number = 5 * 60 * 1000): T | null {
     const item = this.cache.get(key);
-    if (!item) return null;
+    if (!item) {
+      console.log(`Cache miss: ${key}`);
+      return null;
+    }
 
     if (ttl > 0 && Date.now() - item.timestamp > ttl) {
+      console.log(
+        `Cache expired: ${key}, age: ${(Date.now() - item.timestamp) / 1000}s`
+      );
       this.cache.delete(key);
       return null;
+    }
+
+    console.log(
+      `Cache hit: ${key}, age: ${(Date.now() - item.timestamp) / 1000}s`
+    );
+
+    // データの検証 (特にIssue配列の場合)
+    if (Array.isArray(item.data)) {
+      const itemCount = item.data.length;
+      console.log(`Cached array contains ${itemCount} items`);
+
+      // 先頭の数アイテムをサンプルとして検査
+      const sampleSize = Math.min(3, itemCount);
+      for (let i = 0; i < sampleSize; i++) {
+        const sample = item.data[i];
+        if (sample && typeof sample === "object") {
+          console.log(
+            `Sample item #${i}:`,
+            sample.id ? `id: ${sample.id.substring(0, 8)}...` : "no id",
+            sample.title
+              ? `title: ${sample.title.substring(0, 15)}...`
+              : "no title",
+            sample.state ? `state: ${typeof sample.state}` : "no state"
+          );
+        }
+      }
     }
 
     return item.data as T;
@@ -46,6 +78,11 @@ export class CacheService {
    * @param lastUpdateId 最後の更新ID
    */
   set<T>(key: string, data: T, lastUpdateId?: string): void {
+    console.log(
+      `Setting cache: ${key}`,
+      Array.isArray(data) ? `(${data.length} items)` : ""
+    );
+
     this.cache.set(key, {
       data,
       timestamp: Date.now(),

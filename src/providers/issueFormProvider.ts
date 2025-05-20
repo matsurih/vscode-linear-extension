@@ -122,6 +122,11 @@ export class IssueFormProvider implements vscode.WebviewViewProvider {
       const teams = await this._linearService.getTeams();
       this._view?.webview.postMessage({ type: "teamsLoaded", teams });
     } catch (error) {
+      console.error(`Failed to load teams: ${error}`);
+      this._view?.webview.postMessage({
+        type: "error",
+        message: `チーム情報の取得に失敗しました: ${error}`,
+      });
       throw new Error(`Failed to load teams: ${error}`);
     }
   }
@@ -131,6 +136,11 @@ export class IssueFormProvider implements vscode.WebviewViewProvider {
       const states = await this._linearService.getWorkflowStates(teamId);
       this._view?.webview.postMessage({ type: "statesLoaded", states });
     } catch (error) {
+      console.error(`Failed to load states: ${error}`);
+      this._view?.webview.postMessage({
+        type: "error",
+        message: `ステータス情報の取得に失敗しました: ${error}`,
+      });
       throw new Error(`Failed to load states: ${error}`);
     }
   }
@@ -148,17 +158,39 @@ export class IssueFormProvider implements vscode.WebviewViewProvider {
     });
   }
 
-  public showCreateForm() {
+  public async showCreateForm() {
     if (this._view) {
       this._view.show(true);
-      this._view.webview.postMessage({ type: "showCreateForm" });
+      try {
+        await this._view.webview.postMessage({
+          type: "showCreateForm",
+          loading: false, // 初期状態でローディングを表示しない
+        });
+      } catch (error) {
+        console.error("Failed to show create form:", error);
+        // エラーが発生した場合でもユーザーに通知
+        vscode.window.showErrorMessage(
+          `フォームの表示に失敗しました: ${error}`
+        );
+      }
     }
   }
 
-  public showEditForm(issue: Issue) {
+  public async showEditForm(issue: Issue) {
     if (this._view) {
       this._view.show(true);
-      this._view.webview.postMessage({ type: "showEditForm", issue });
+      try {
+        await this._view.webview.postMessage({
+          type: "showEditForm",
+          issue,
+          loading: false, // 初期状態でローディングを表示しない
+        });
+      } catch (error) {
+        console.error("Failed to show edit form:", error);
+        vscode.window.showErrorMessage(
+          `Issue編集フォームの表示に失敗しました: ${error}`
+        );
+      }
     }
   }
 
@@ -256,10 +288,45 @@ export class IssueFormProvider implements vscode.WebviewViewProvider {
         .cancel-button:hover {
           background: var(--vscode-button-secondaryHoverBackground);
         }
+        .global-loading {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          padding: 40px 20px;
+          color: var(--vscode-descriptionForeground);
+        }
+        .global-loading-spinner {
+          border: 4px solid rgba(0, 0, 0, 0.1);
+          border-radius: 50%;
+          border-top: 4px solid var(--vscode-progressBar-background);
+          width: 24px;
+          height: 24px;
+          margin-bottom: 15px;
+          animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+        .global-error {
+          color: var(--vscode-errorForeground);
+          padding: 15px;
+          margin: 20px 0;
+          border: 1px solid var(--vscode-inputValidation-errorBorder);
+          background: var(--vscode-inputValidation-errorBackground);
+          border-radius: 3px;
+        }
       </style>
     </head>
     <body>
-      <div id="create-form">
+      <div id="global-loading" class="global-loading">
+        <div class="global-loading-spinner"></div>
+        <span>データを読み込み中...</span>
+      </div>
+      <div id="global-error" class="global-error hidden"></div>
+      
+      <div id="create-form" class="hidden">
         <div class="form-header">
           <h2 aria-live="polite">Create New Issue</h2>
         </div>
@@ -303,6 +370,34 @@ export class IssueFormProvider implements vscode.WebviewViewProvider {
         let teams = [];
         let states = [];
         let isSubmitting = false;
+        
+        // UI要素の参照
+        const loadingElement = document.getElementById('global-loading');
+        const errorElement = document.getElementById('global-error');
+        const formElement = document.getElementById('create-form');
+        
+        // 初期状態ではローディング表示
+        showLoading();
+        
+        // UI状態管理関数
+        function showLoading() {
+          loadingElement.classList.remove('hidden');
+          errorElement.classList.add('hidden');
+          formElement.classList.add('hidden');
+        }
+        
+        function showError(message) {
+          loadingElement.classList.add('hidden');
+          errorElement.classList.remove('hidden');
+          errorElement.textContent = message;
+          formElement.classList.add('hidden');
+        }
+        
+        function showForm() {
+          loadingElement.classList.add('hidden');
+          errorElement.classList.add('hidden');
+          formElement.classList.remove('hidden');
+        }
 
         // フォームの状態管理
         const formState = {
@@ -448,6 +543,7 @@ export class IssueFormProvider implements vscode.WebviewViewProvider {
                 teamSelect.value = currentIssue.team.id;
                 vscode.postMessage({ type: 'getStates', teamId: currentIssue.team.id });
               }
+              showForm();
               break;
 
             case 'statesLoaded':
@@ -472,6 +568,7 @@ export class IssueFormProvider implements vscode.WebviewViewProvider {
               document.querySelector('button[type="submit"]').textContent = 'Create';
               // Clear all error messages
               document.querySelectorAll('.error').forEach(el => el.classList.add('hidden'));
+              showForm();
               break;
 
             case 'showEditForm':
@@ -491,9 +588,11 @@ export class IssueFormProvider implements vscode.WebviewViewProvider {
                 document.getElementById('team').value = currentIssue.team.id;
                 vscode.postMessage({ type: 'getStates', teamId: currentIssue.team.id });
               }
+              showForm();
               break;
 
             case 'error':
+              showError(message.message || 'エラーが発生しました');
               formState.setError('form', message.message);
               break;
           }

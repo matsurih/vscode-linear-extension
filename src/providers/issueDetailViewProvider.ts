@@ -40,19 +40,87 @@ export class IssueDetailViewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    try {
-      const issue = await this._linearService.getIssueDetails(issueId);
-      const comments = await this._linearService.getIssueComments(issueId);
+    // ローディング中であることをWebViewに通知
+    await this._view.webview.postMessage({
+      type: "loading",
+    });
 
-      // WebViewにデータを送信
-      await this._view.webview.postMessage({
-        type: "updateIssue",
-        issue,
-        comments,
-      });
-    } catch (error) {
-      vscode.window.showErrorMessage(`Issue詳細の取得に失敗しました: ${error}`);
-    }
+    let retryCount = 0;
+    const maxRetries = 3;
+    const retryDelay = 1000; // 1秒
+
+    const tryFetchIssueDetail = async (): Promise<void> => {
+      try {
+        console.log(
+          `Fetching issue details for ${issueId}, attempt ${retryCount + 1}`
+        );
+        const issue = await this._linearService.getIssueDetails(issueId);
+
+        // Issueが取得できたか確認
+        if (!issue) {
+          throw new Error(`Issue ${issueId} not found`);
+        }
+
+        // state情報が正しく取得できているか確認
+        if (!issue.state) {
+          console.warn(`Issue ${issueId} has no state information`);
+        }
+
+        // コメントを取得
+        const comments = await this._linearService.getIssueComments(issueId);
+
+        // WebViewにデータを送信
+        if (this._view) {
+          await this._view.webview.postMessage({
+            type: "updateIssue",
+            issue,
+            comments,
+          });
+        }
+
+        console.log(`Successfully loaded issue ${issueId}`);
+      } catch (error) {
+        console.error(
+          `Issue詳細の取得に失敗しました (${
+            retryCount + 1
+          }/${maxRetries}): ${error}`
+        );
+
+        if (retryCount < maxRetries - 1) {
+          retryCount++;
+          // 徐々にリトライ間隔を延ばす (指数バックオフ)
+          const wait = retryDelay * Math.pow(2, retryCount);
+          console.log(`${wait}ms後に再試行します...`);
+
+          setTimeout(() => {
+            tryFetchIssueDetail().catch((err) => {
+              console.error(`リトライ中にエラー発生: ${err}`);
+              // 最終的にエラーを表示
+              this._view?.webview.postMessage({
+                type: "error",
+                message: `データの取得に失敗しました: ${err}`,
+              });
+            });
+          }, wait);
+          return;
+        }
+
+        // リトライ回数を超えた場合はエラーメッセージを表示
+        vscode.window.showErrorMessage(
+          `Issue詳細の取得に失敗しました: ${error}`
+        );
+
+        // エラーメッセージをWebViewに送信
+        if (this._view) {
+          await this._view.webview.postMessage({
+            type: "error",
+            message: `データの取得に失敗しました: ${error}`,
+          });
+        }
+      }
+    };
+
+    await tryFetchIssueDetail();
   }
 
   private _getHtmlForWebview(_webview: vscode.Webview): string {
@@ -108,10 +176,45 @@ export class IssueDetailViewProvider implements vscode.WebviewViewProvider {
         button:hover {
           background: var(--vscode-button-hoverBackground);
         }
+        .loading {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 20px;
+          color: var(--vscode-descriptionForeground);
+        }
+        .loading-spinner {
+          border: 4px solid rgba(0, 0, 0, 0.1);
+          border-radius: 50%;
+          border-top: 4px solid var(--vscode-progressBar-background);
+          width: 20px;
+          height: 20px;
+          margin-right: 10px;
+          animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+        .error-message {
+          color: var(--vscode-errorForeground);
+          padding: 10px;
+          border: 1px solid var(--vscode-inputValidation-errorBorder);
+          background: var(--vscode-inputValidation-errorBackground);
+          margin-bottom: 15px;
+        }
+        .hidden {
+          display: none;
+        }
       </style>
     </head>
     <body>
-      <div id="issue-container">
+      <div id="loading" class="loading">
+        <div class="loading-spinner"></div>
+        <span>読み込み中...</span>
+      </div>
+      <div id="error-container" class="error-message hidden"></div>
+      <div id="issue-container" class="hidden">
         <div class="issue-title"></div>
         <div class="issue-description"></div>
         <div class="comments-section">
@@ -125,6 +228,12 @@ export class IssueDetailViewProvider implements vscode.WebviewViewProvider {
       </div>
       <script>
         let currentIssueId = '';
+        const loadingElement = document.getElementById('loading');
+        const errorContainer = document.getElementById('error-container');
+        const issueContainer = document.getElementById('issue-container');
+
+        // 初期状態は読み込み中
+        showLoading();
 
         window.addEventListener('message', event => {
           const message = event.data;
@@ -132,10 +241,38 @@ export class IssueDetailViewProvider implements vscode.WebviewViewProvider {
             case 'updateIssue':
               updateIssueView(message.issue, message.comments);
               break;
+            case 'error':
+              showError(message.message);
+              break;
           }
         });
 
+        function showLoading() {
+          loadingElement.classList.remove('hidden');
+          errorContainer.classList.add('hidden');
+          issueContainer.classList.add('hidden');
+        }
+
+        function showError(message) {
+          loadingElement.classList.add('hidden');
+          errorContainer.classList.remove('hidden');
+          issueContainer.classList.add('hidden');
+          
+          errorContainer.textContent = \`エラーが発生しました: \${message}\`;
+        }
+
         function updateIssueView(issue, comments) {
+          // 読み込み中表示を非表示
+          loadingElement.classList.add('hidden');
+          errorContainer.classList.add('hidden');
+          issueContainer.classList.remove('hidden');
+
+          // データがない場合はエラー表示
+          if (!issue) {
+            showError('課題データを取得できませんでした');
+            return;
+          }
+
           currentIssueId = issue.id;
           document.querySelector('.issue-title').textContent = issue.title;
           document.querySelector('.issue-description').textContent = issue.description || '';
@@ -159,6 +296,8 @@ export class IssueDetailViewProvider implements vscode.WebviewViewProvider {
             content
           });
 
+          // コメント送信中は再度読み込み中表示
+          showLoading();
           document.getElementById('new-comment').value = '';
         }
 

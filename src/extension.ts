@@ -42,14 +42,18 @@ export async function activate(context: vscode.ExtensionContext) {
   });
 
   // 初期フィルターの適用
-  const defaultFilter = filterService.getDefaultFilter();
+  // すべてのフィルターをクリアし、基本的なフィルターのみ設定（完了は非表示）
+  const defaultFilter = {
+    includeCompleted: false,
+  };
   issueTreeProvider.setFilter(defaultFilter);
 
   // キャッシュを事前にウォームアップ
   setTimeout(async () => {
     try {
-      await linearService.getIssues(false, false);
-      console.log("Cache warmed up");
+      // 自分にアサインされたIssueのみを取得
+      await linearService.getIssues(false);
+      console.log("Cache warmed up with assigned issues");
     } catch (e) {
       console.error("Failed to warm up cache", e);
     }
@@ -60,9 +64,6 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("linear.refreshIssues", () => {
       issueTreeProvider.refresh();
     }),
-    vscode.commands.registerCommand("linear.filterMyIssues", () => {
-      issueTreeProvider.setFilter({ assignedToMe: true });
-    }),
     vscode.commands.registerCommand("linear.showIssueDetail", async (issue) => {
       await issueDetailProvider.updateIssueDetail(issue.id);
     }),
@@ -72,6 +73,12 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("linear.editIssue", async (issue) => {
       issueFormProvider.showEditForm(issue);
     }),
+    vscode.commands.registerCommand(
+      "linear.toggleGroupExpansion",
+      (groupId) => {
+        issueTreeProvider.toggleGroupExpansion(groupId);
+      }
+    ),
     vscode.commands.registerCommand(
       "linear.changeIssueStatus",
       async (issue) => {
