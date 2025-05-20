@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'none'; style-src {{cspSource}}; script-src {{cspSource}};">
+  <title>Linear Issue Detail</title>
+  <link rel="stylesheet" href="{{stylesUri}}">
+</head>
+
+<body>
+  <!-- ローディング表示 -->
+  <div id="loading" class="loading-container hidden">
+    <div class="spinner"></div>
+    <div>読み込み中...</div>
+  </div>
+
+  <!-- イシューがない場合の表示 -->
+  <div id="empty-state" class="empty-state">
+    <div class="empty-state-icon">📋</div>
+    <h3>イシューを選択してください</h3>
+    <p>左側のリストからイシューを選択すると、詳細がここに表示されます。</p>
+  </div>
+
+  <!-- エラー表示 -->
+  <div id="error" class="error-container hidden"></div>
+
+  <!-- イシュー詳細表示 -->
+  <div id="issue-detail" class="issue-container hidden">
+    <div class="issue-header">
+      <div>
+        <span id="issue-id" class="issue-id"></span>
+        <span id="issue-title" class="issue-title"></span>
+      </div>
+      <div class="issue-metadata">
+        <span id="issue-status"></span>
+        <span id="issue-priority"></span>
+        <span id="issue-assignee"></span>
+      </div>
+    </div>
+
+    <div id="issue-description" class="issue-description"></div>
+
+    <div class="comments-container">
+      <div class="comments-header">コメント</div>
+      <div id="comments-list"></div>
+
+      <div class="comment-form">
+        <textarea id="comment-input" class="comment-textarea" placeholder="コメントを入力してください..."></textarea>
+        <button id="comment-submit" class="comment-button">コメントを追加</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- デバッグ情報（非表示） -->
+  <div id="debug-info" class="debug-container hidden"></div>
+
+  <script src="{{scriptUri}}"></script>
+</body>
+
+</html>

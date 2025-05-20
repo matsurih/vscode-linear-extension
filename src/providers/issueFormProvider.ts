@@ -320,10 +320,6 @@ export class IssueFormProvider implements vscode.WebviewViewProvider {
       </style>
     </head>
     <body>
-      <div id="global-loading" class="global-loading">
-        <div class="global-loading-spinner"></div>
-        <span>データを読み込み中...</span>
-      </div>
       <div id="global-error" class="global-error hidden"></div>
       
       <div id="create-form" class="hidden">

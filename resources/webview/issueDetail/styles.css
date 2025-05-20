@@ -1,0 +1,184 @@
+:root {
+  --container-background: var(--vscode-editor-background);
+  --container-foreground: var(--vscode-editor-foreground);
+  --border-color: var(--vscode-panel-border);
+  --hover-background: var(--vscode-list-hoverBackground);
+  --input-background: var(--vscode-input-background);
+  --input-foreground: var(--vscode-input-foreground);
+  --input-border: var(--vscode-input-border);
+  --button-background: var(--vscode-button-background);
+  --button-foreground: var(--vscode-button-foreground);
+  --button-hover-background: var(--vscode-button-hoverBackground);
+  --error-foreground: var(--vscode-errorForeground);
+  --error-background: var(--vscode-inputValidation-errorBackground);
+  --error-border: var(--vscode-inputValidation-errorBorder);
+}
+
+body {
+  padding: 10px;
+  font-family: var(--vscode-font-family);
+  color: var(--container-foreground);
+  background-color: var(--container-background);
+  font-size: var(--vscode-font-size);
+  line-height: 1.5;
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* ローディング表示 */
+.loading-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 200px;
+  flex-direction: column;
+}
+
+.spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid rgba(150, 150, 150, 0.2);
+  border-radius: 50%;
+  border-top-color: var(--button-background);
+  animation: spin 1s ease-in-out infinite;
+  margin-bottom: 15px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* イシューがない場合の表示 */
+.empty-state {
+  text-align: center;
+  padding: 30px 20px;
+}
+
+.empty-state-icon {
+  font-size: 48px;
+  margin-bottom: 15px;
+}
+
+/* イシュー詳細表示 */
+.issue-container {
+  display: flex;
+  flex-direction: column;
+}
+
+.issue-header {
+  margin-bottom: 15px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.issue-id {
+  color: var(--vscode-descriptionForeground);
+  font-weight: normal;
+  margin-right: 10px;
+}
+
+.issue-title {
+  font-size: 1.2em;
+  font-weight: bold;
+  margin-bottom: 5px;
+}
+
+.issue-metadata {
+  font-size: 0.9em;
+  color: var(--vscode-descriptionForeground);
+  display: flex;
+  gap: 10px;
+}
+
+.issue-description {
+  margin: 10px 0 20px;
+  white-space: pre-wrap;
+}
+
+/* コメント表示 */
+.comments-container {
+  margin-top: 20px;
+}
+
+.comments-header {
+  font-weight: bold;
+  margin-bottom: 10px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.comment {
+  margin-bottom: 15px;
+  padding: 10px;
+  background-color: var(--vscode-editor-background);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+}
+
+.comment-author {
+  font-weight: bold;
+  margin-bottom: 5px;
+}
+
+.comment-date {
+  font-size: 0.85em;
+  color: var(--vscode-descriptionForeground);
+}
+
+/* コメント入力フォーム */
+.comment-form {
+  margin-top: 20px;
+}
+
+.comment-textarea {
+  width: 100%;
+  min-height: 80px;
+  padding: 8px;
+  margin-bottom: 10px;
+  background-color: var(--input-background);
+  color: var(--input-foreground);
+  border: 1px solid var(--input-border);
+  border-radius: 2px;
+  resize: vertical;
+}
+
+.comment-button {
+  background-color: var(--button-background);
+  color: var(--button-foreground);
+  border: none;
+  padding: 6px 14px;
+  border-radius: 2px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.comment-button:hover {
+  background-color: var(--button-hover-background);
+}
+
+/* エラー表示 */
+.error-container {
+  color: var(--error-foreground);
+  background-color: var(--error-background);
+  border: 1px solid var(--error-border);
+  padding: 10px;
+  margin: 10px 0;
+  border-radius: 4px;
+}
+
+/* デバッグ情報（非表示） */
+.debug-container {
+  margin-top: 30px;
+  padding: 10px;
+  border-top: 1px dashed var(--border-color);
+  font-family: monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  max-height: 200px;
+  overflow: auto;
+  display: none;
+}

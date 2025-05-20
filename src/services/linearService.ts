@@ -450,6 +450,11 @@ export class LinearService {
    * @param issueId IssueのID
    */
   public async getIssueDetails(issueId: string) {
+    if (!issueId || typeof issueId !== "string") {
+      console.error(`Invalid issueId provided: ${issueId}`);
+      throw new Error("無効なイシューIDが提供されました");
+    }
+
     // 改善: キャッシュキーをissueIdベースに変更
     const cacheKey = `issueDetail:${issueId}`;
     console.log(`Attempting to get issue details from cache: ${cacheKey}`);

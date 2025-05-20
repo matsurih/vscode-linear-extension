@@ -606,7 +606,7 @@ export class IssueTreeProvider
     treeItem.command = {
       command: "linear.showIssueDetail",
       title: "Show Issue Detail",
-      arguments: [issue],
+      arguments: [issue.id], // IDのみを渡す（軽量化）
     };
 
     return treeItem;

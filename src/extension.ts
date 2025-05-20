@@ -35,11 +35,145 @@ export async function activate(context: vscode.ExtensionContext) {
 
   const filterService = new FilterService();
 
+  // 初期化時にWebViewを表示するためのコマンド登録
+  const initializeViewsCommand = vscode.commands.registerCommand(
+    "linear.initializeViews",
+    async () => {
+      try {
+        // まずLinearビューコンテナを開く（アクティビティバーのアイコン）
+        await vscode.commands.executeCommand("workbench.view.extension.linear");
+
+        // 次に各WebViewを表示しようとする
+        // 注：これは内部実装に依存し、動作が保証されないため試行として実装
+        const tries = [
+          "workbench.view.extension.linearIssueDetail",
+          "linearIssueDetail.focus",
+        ];
+
+        for (const cmd of tries) {
+          try {
+            await vscode.commands.executeCommand(cmd);
+            console.log(`Successfully executed command: ${cmd}`);
+            break; // 成功したらループを抜ける
+          } catch (e) {
+            console.log(`Failed to execute command: ${cmd}`, e);
+          }
+        }
+      } catch (e) {
+        console.log("Failed to initialize views", e);
+      }
+    }
+  );
+  context.subscriptions.push(initializeViewsCommand);
+
+  // 拡張機能起動時に自動的にビューを初期化
+  setTimeout(async () => {
+    try {
+      console.log("拡張機能の初期化: ビューの初期化を開始");
+
+      // 手順1: Linearビューコンテナを開く
+      await vscode.commands.executeCommand("workbench.view.extension.linear");
+      console.log("拡張機能の初期化: Linearコンテナを開きました");
+
+      // 初期化が確実に行われるよう少し待機
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      // 手順2: Issue Tree（リスト）を表示
+      await vscode.commands.executeCommand("linearIssues.focus");
+      console.log("拡張機能の初期化: Issue Treeを表示しました");
+
+      // さらに少し待機
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      // 手順3: Issue Detail表示を試みる
+      try {
+        // Issue Detailビューを表示
+        const detailCommands = [
+          "linearIssueDetail.focus",
+          "workbench.view.extension.linearIssueDetail",
+        ];
+
+        for (const cmd of detailCommands) {
+          try {
+            await vscode.commands.executeCommand(cmd);
+            console.log(
+              `拡張機能の初期化: ${cmd} でIssue Detailを表示しました`
+            );
+            break;
+          } catch (err) {
+            console.log(`拡張機能の初期化: ${cmd} の実行に失敗:`, err);
+          }
+        }
+
+        // Issue Detailビューが確実に初期化されるよう、ダミーデータで更新試行
+        // 注: ユーザーがイシューを選択するまでは実際のデータを表示する必要はない
+        // try {
+        //   const dummyIssueId = "initialization-dummy-id";
+        //   // updateIssueDetailメソッドは、WebViewが利用できない場合は_pendingIssueIdに保存するだけ
+        //   await issueDetailProvider.updateIssueDetail(dummyIssueId);
+        //   console.log(
+        //     "拡張機能の初期化: Issue Detailパネルの初期化を試みました"
+        //   );
+        // } catch (initErr) {
+        //   console.log("拡張機能の初期化: Issue Detail初期化エラー:", initErr);
+        // }
+
+        // Issue FormビューもViewの一部として初期化（必要に応じて）
+        try {
+          await vscode.commands.executeCommand(
+            "workbench.view.extension.linearIssueForm"
+          );
+          console.log("拡張機能の初期化: Issue Formを表示しました");
+        } catch (formErr) {
+          // フォームの表示は省略可能なので、エラーは無視
+        }
+
+        // 最終的にIssue Treeに戻す
+        await vscode.commands.executeCommand("linearIssues.focus");
+      } catch (viewErr) {
+        console.log("拡張機能の初期化: 詳細ビューの初期化でエラー:", viewErr);
+      }
+    } catch (error) {
+      console.error("拡張機能の初期化: ビューの初期化に失敗:", error);
+    }
+  }, 1500); // 少し長めの遅延で確実にVSCodeが準備できた状態で実行
+
   // TreeViewの登録
   const treeView = vscode.window.createTreeView("linearIssues", {
     treeDataProvider: issueTreeProvider,
     showCollapseAll: true,
   });
+
+  // WebViewプロバイダーの登録
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(
+      IssueDetailViewProvider.viewType,
+      issueDetailProvider
+    ),
+    vscode.window.registerWebviewViewProvider(
+      IssueFormProvider.viewType,
+      issueFormProvider
+    )
+  );
+
+  // 独自のビュー表示コマンドを登録
+  const showIssueDetailViewCommand = vscode.commands.registerCommand(
+    "linear.showIssueDetailView",
+    async () => {
+      // まずLinearビューコンテナを開く（これは通常機能する）
+      try {
+        await vscode.commands.executeCommand("workbench.view.extension.linear");
+        console.log("Linear extension view container activated");
+      } catch (error) {
+        console.error("Failed to open Linear view container:", error);
+      }
+
+      // 注: 特定のビューを直接アクティブにする試みは避ける
+      // VSCodeの内部コマンド形式は変更される可能性があるためエラーになりやすい
+    }
+  );
+
+  context.subscriptions.push(showIssueDetailViewCommand);
 
   // 初期フィルターの適用
   // すべてのフィルターをクリアし、基本的なフィルターのみ設定（完了は非表示）
@@ -65,7 +199,97 @@ export async function activate(context: vscode.ExtensionContext) {
       issueTreeProvider.refresh();
     }),
     vscode.commands.registerCommand("linear.showIssueDetail", async (issue) => {
-      await issueDetailProvider.updateIssueDetail(issue.id);
+      if (!issue) {
+        vscode.window.showErrorMessage("イシューオブジェクトがありません");
+        return;
+      }
+
+      // issueがオブジェクトか文字列（ID）かチェック
+      const issueId = typeof issue === "string" ? issue : issue.id;
+
+      if (!issueId) {
+        vscode.window.showErrorMessage("イシューIDがありません");
+        console.error("無効なイシューオブジェクト:", issue);
+        return;
+      }
+
+      console.log(`イシュー詳細を表示します: ${issueId}`);
+
+      try {
+        // ステップ1: まずイシュー詳細の更新を要求
+        // これにより、WebViewが後で表示されたときにすぐにデータが表示される
+        try {
+          console.log("先にイシュー詳細データを更新します");
+          await issueDetailProvider.updateIssueDetail(issueId);
+          console.log("イシュー詳細データの更新に成功しました");
+        } catch (dataErr) {
+          console.error("イシュー詳細データの更新に失敗:", dataErr);
+          // 継続して表示を試みる
+        }
+
+        // ステップ2: Linearビューコンテナを開く
+        await vscode.commands.executeCommand("workbench.view.extension.linear");
+        console.log("Linearビューコンテナを開きました");
+
+        // ステップ3: 少し待機してからIssueDetail表示を試みる
+        await new Promise((resolve) => setTimeout(resolve, 300));
+
+        // ステップ4: IssueDetailビューを確実に表示する
+        try {
+          // Detail Viewを表示するための複数の方法を試す
+          const viewCommands = [
+            "linearIssueDetail.focus", // これを先に試す
+            "workbench.view.extension.linearIssueDetail",
+          ];
+
+          let success = false;
+          for (const cmd of viewCommands) {
+            try {
+              await vscode.commands.executeCommand(cmd);
+              console.log(`コマンド ${cmd} でIssue Detailビューを開きました`);
+              success = true;
+              break;
+            } catch (err) {
+              console.log(`コマンド ${cmd} の実行に失敗: ${err}`);
+            }
+          }
+
+          if (!success) {
+            console.log(
+              "標準コマンドでビューを開けませんでした、別の方法を試みます"
+            );
+
+            // VSCodeのビューの状態に関わらず、直接データ更新を再試行
+            try {
+              await issueDetailProvider.updateIssueDetail(issueId);
+              console.log("イシュー詳細の第2回更新に成功");
+            } catch (retryErr) {
+              console.error("イシュー詳細の第2回更新に失敗:", retryErr);
+            }
+
+            // ユーザーに明示的な指示を表示
+            vscode.window.showInformationMessage(
+              "イシュー詳細を表示するには、Linearパネルの「Issue Detail」タブをクリックしてください",
+              "了解"
+            );
+          }
+        } catch (viewError) {
+          console.error("Issue Detailビューを開く際にエラーが発生:", viewError);
+
+          // エラー発生時にもデータ更新を試みる
+          try {
+            await issueDetailProvider.updateIssueDetail(issueId);
+            console.log("エラー後のイシュー詳細更新に成功");
+          } catch (errAfterErr) {
+            console.error("エラー後のイシュー詳細更新に失敗:", errAfterErr);
+          }
+        }
+      } catch (error) {
+        console.error("イシュー詳細の表示中にエラー:", error);
+        vscode.window.showErrorMessage(
+          "イシュー詳細の表示中にエラーが発生しました"
+        );
+      }
     }),
     vscode.commands.registerCommand("linear.createIssue", () => {
       issueFormProvider.showCreateForm();
@@ -449,6 +673,18 @@ export async function activate(context: vscode.ExtensionContext) {
         !issueTreeProvider.isIssueGroup(selectedItem) &&
         issueTreeProvider.isIssue(selectedItem)
       ) {
+        // Linearコンテナを表示する（アクティビティバーを開く）
+        try {
+          await vscode.commands.executeCommand(
+            "workbench.view.extension.linear"
+          );
+          console.log("Tree selection: Activated Linear view container");
+        } catch (error) {
+          console.log("Tree selection: Failed to open Linear container", error);
+        }
+
+        // イシュー詳細を直接更新
+        console.log("Tree selection: Updating issue detail");
         await issueDetailProvider.updateIssueDetail(selectedItem.id);
       }
     }
